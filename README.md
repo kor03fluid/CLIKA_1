@@ -10,6 +10,12 @@ Arduino 센서 라이브러리 모음.
 | `DHT-sensor-library/` | DHT11/DHT22 온습도 센서 | [adafruit/DHT-sensor-library](https://github.com/adafruit/DHT-sensor-library) | MIT |
 | `Adafruit_Sensor/` | Adafruit Unified Sensor (DHT 라이브러리 의존성) | [adafruit/Adafruit_Sensor](https://github.com/adafruit/Adafruit_Sensor) | Apache-2.0 |
 
+## 펌웨어
+
+| 폴더 | 내용 | 상태 |
+|---|---|---|
+| `firmware/env_node/` | 환경 노드 (ESP32 WROOM): DHT11·조도·추가 센서, BLE 광고, 앵커 RSSI 보고 | 빌드 검증만 |
+
 ## 설치
 
 각 라이브러리 폴더를 Arduino `libraries` 폴더(보통 `~/Documents/Arduino/libraries/`)에 복사한 뒤 Arduino IDE를 재시작한다.

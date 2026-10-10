@@ -9,6 +9,7 @@ struct AnchorStats {
   uint32_t rx_relayed_skip;   // 중계 패킷이라 버림
   uint32_t table_full_skip;   // 병사 표가 가득 차 버림
   uint32_t reports;           // 보고 패킷 수
+  uint32_t queue_full_skip;   // 송신 큐가 가득 차 보고를 미룸
 };
 
 void anchorBegin();

@@ -54,9 +54,18 @@ class WebTest(unittest.TestCase):
         status, body = self.post("/api/virtual", {"scenario": "normal", "speed": 50})
         self.assertEqual(status, 200)
         self.assertTrue(body["running"])
-        status, _ = self.post("/api/virtual", {"scenario": "nope"})
-        self.assertEqual(status, 400)
-        self.assertTrue(self.app.virtual_status()["running"])
+        for bad in ({"scenario": "nope"}, {"scenario": "normal", "nodes": ["x"]},
+                    {"scenario": "normal", "nodes": "2"}, {"scenario": "normal", "speed": 0},
+                    {"scenario": "normal", "speed": "fast"}, {"scenario": "normal", "loss_rate": 2}):
+            status, body = self.post("/api/virtual", bad)
+            self.assertEqual(status, 400, bad)
+            self.assertTrue(self.app.virtual_status()["running"], bad)
+
+    def test_events_bad_query(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/api/events?limit=abc")
+        self.assertEqual(cm.exception.code, 400)
+        self.assertEqual(self.get("/api/events?limit=0"), [])
 
     def test_stream_sends_initial_state(self):
         with urllib.request.urlopen(self.base + "/api/stream", timeout=5) as r:

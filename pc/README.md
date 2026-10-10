@@ -14,7 +14,7 @@
 관제 UI·구역 추정·우선순위 판단은 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
 `/`의 디버그 화면은 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 22개 통과. 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
+**검증 상태**: 단위 테스트 35개 통과(펌웨어 출력 형식과의 일치 검사 포함). 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
 디버그 화면(데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
 ## 실행
@@ -38,6 +38,8 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 
 패킷은 `type`, `node`, `boot`, `seq`가 필수다. 중복 제거 키는 `node + boot + seq`.
 `boot`가 바뀌면 재부팅으로 기록하고, 이전 `boot`의 늦은 패킷은 상태를 바꾸지 않는다(`stale_boot`).
+단, 현재 `boot`가 30초 넘게 조용한 상태에서 예전 번호가 다시 오면(플래시 초기화·카운터 순환으로 번호 재사용)
+새 부팅으로 받아들인다(`STALE_BOOT_WINDOW_S`).
 seq 간격으로 누락 수를 센다(16bit 순환, 늦게 온 패킷은 누락에서 뺌).
 
 | type | 보내는 쪽 | 형식 |
@@ -46,7 +48,9 @@ seq 간격으로 누락 수를 센다(16bit 순환, 늦게 온 패킷은 누락�
 | `soldier` | 게이트웨이 | 아래 **초안** (팀원 B와 확정) |
 | `boot`, `stats`, `warn`, `log` | 모든 장치 | 메타. 패킷 수에 넣지 않음. `stats`는 `device_stats`에 보관 |
 
-JSON이 아닌 줄(ESP32 부팅 메시지 등)은 `rx.jsonl`에 `"result":"text"`로만 남는다.
+JSON이 아닌 줄(ESP32 부팅 메시지 등)과 `NaN`·`Infinity`가 든 줄은 `rx.jsonl`에 `"result":"text"`로만 남는다.
+형식이 어긋난 필드(예: `obs`가 목록이 아님, `age_ms`가 문자열)는 그 필드만 무시한다. 그래도 처리 중 예외가 나면
+`"result":"error"`와 오류 내용을 로그에 남기고 다음 줄을 계속 읽는다(시리얼 연결은 유지).
 
 공통 선택 필드: `via`(`"direct"`/`"relay"`) 또는 `relayed`(bool), `virtual`(bool), `tx_mode`(`"fixed"`/`"adaptive"`).
 
@@ -90,7 +94,7 @@ nodes.<id>        kind(soldier|env|anchor) · boot · last_seq · last_rx · age
                   counters       rx · dup · missing · relayed · reboots · stale_boot
 anchors.<앵커>.<병사>  rssi · rssi_avg · n · last_seq · seen_ts(수신 시각 추정) · age_s · virtual
 device_stats.<id>  장치가 보낸 마지막 stats (송신량 비교용)
-totals             lines · packets · dup · invalid · meta
+totals             lines · packets · dup · invalid · meta · error
 virtual · inputs · replay
 ```
 
@@ -137,7 +141,7 @@ virtual · inputs · replay
 
 `logs/<시작 시각>/`
 
-- `rx.jsonl`: 모든 입력 줄. `rx_ts`, `source`, `port`, `result`(ok·dup·stale_boot·meta·invalid·text), `obj`
+- `rx.jsonl`: 모든 입력 줄. `rx_ts`, `source`, `port`, `result`(ok·dup·stale_boot·meta·invalid·error·text), `obj`, `error`
 - `events.jsonl`: 이벤트(`rec:"event"`)와 확인·해결 기록(`rec:"ack"`, `rec:"resolve"`)
 - `session.json`: 실행 옵션
 

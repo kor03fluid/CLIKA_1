@@ -42,28 +42,42 @@ class App:
         s = self.hub.snapshot(self.clock(), self.virtual_status())
         s["inputs"] = [r.status() for r in self.readers.values()]
         if self.replayer is not None:
-            s["replay"] = {"path": self.replayer.path, "done": self.replayer.done}
+            s["replay"] = {"path": self.replayer.path, "done": self.replayer.done,
+                           "error": self.replayer.error}
         return s
 
     def set_virtual(self, cfg):
-        if cfg.get("enabled", True) and cfg.get("scenario", "normal") not in SCENARIOS:
-            raise ValueError("unknown scenario: " + str(cfg.get("scenario")))  # 실행 중인 것은 유지
+        """가상 노드 시작/교체/중지. 값이 잘못되면 ValueError를 내고 실행 중인 것은 그대로 둔다."""
+        enabled = bool(cfg.get("enabled", True))
+        runner = self._build_virtual(cfg) if enabled else None  # 검사·생성 먼저
         with self._vlock:
             if self.virtual is not None:
                 self.virtual.stop()
                 self.virtual.join(timeout=2)
                 self.virtual = None
-            if not cfg.get("enabled", True):
-                return self.virtual_status()
-            nodes = cfg.get("nodes") or None
-            if nodes is not None:
-                nodes = [int(n, 0) if isinstance(n, str) else int(n) for n in nodes]
-            self.virtual = VirtualRunner(
-                self.hub, clock=self.clock, speed=float(cfg.get("speed", 1.0)),
-                scenario=cfg.get("scenario", "normal"), nodes=nodes, seed=cfg.get("seed"),
-                loop=bool(cfg.get("loop", False)), loss_rate=float(cfg.get("loss_rate", 0.0)))
-            self.virtual.start()
+            if runner is not None:
+                self.virtual = runner
+                runner.start()
             return self.virtual_status()
+
+    def _build_virtual(self, cfg):
+        nodes = cfg.get("nodes") or None
+        if nodes is not None:
+            if not isinstance(nodes, list):
+                raise ValueError("nodes must be a list")
+            try:
+                nodes = [int(n, 0) if isinstance(n, str) else int(n) for n in nodes]
+            except (TypeError, ValueError):
+                raise ValueError("nodes must be integers (e.g. 2 or \"0x31\")")
+        try:
+            speed = float(cfg.get("speed", 1.0))
+            loss_rate = float(cfg.get("loss_rate", 0.0))
+        except (TypeError, ValueError):
+            raise ValueError("speed and loss_rate must be numbers")
+        return VirtualRunner(
+            self.hub, clock=self.clock, speed=speed, scenario=cfg.get("scenario", "normal"),
+            nodes=nodes, seed=cfg.get("seed"), loop=bool(cfg.get("loop", False)),
+            loss_rate=loss_rate)
 
     def ticker(self):
         while not self.stopping:

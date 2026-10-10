@@ -70,13 +70,19 @@ static PktEnv buildEnv(uint8_t events) {
 }
 
 static void sendEnv(uint32_t now, const char* reason, bool urgent) {
+  static bool warnedFull = false;
+  if (bleTxFree() == 0) {
+    // 큐가 비면 다음 loop에서 다시 시도한다. 래치된 이벤트와 seq는 그대로 둔다.
+    if (!warnedFull) Serial.println("{\"type\":\"warn\",\"msg\":\"tx queue full\"}");
+    warnedFull = true;
+    return;
+  }
+  warnedFull = false;
   PktEnv p = buildEnv(sensorsTakeEvents());
   uint8_t flags = urgent ? PKT_FLAG_EVENT : 0;
   if (sensorsLatest().virtual_temp) flags |= PKT_FLAG_VIRTUAL;
   nodeFillHeader(p.h, PKT_ENV, flags);
-  if (!bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), urgent ? EVENT_REPEATS : 1)) {
-    Serial.println("{\"type\":\"warn\",\"msg\":\"tx queue full\"}");
-  }
+  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), urgent ? EVENT_REPEATS : 1);  // 자리는 위에서 확인
   printEnvJson(p, reason);
   s_lastSent = p;
   s_sentOnce = true;
@@ -109,8 +115,9 @@ static void envTxPolicy(uint32_t now) {
     return;
   }
 
-  if (sensorsPendingEvents() && now - s_lastEventTx >= EVENT_MIN_GAP_MS) {
-    sendEnv(now, "event", true);
+  if (sensorsPendingEvents()) {
+    // 이벤트는 반복·이벤트 표시가 붙은 패킷으로만 보낸다. 최소 간격 동안은 다른 송신도 미룬다.
+    if (now - s_lastEventTx >= EVENT_MIN_GAP_MS) sendEnv(now, "event", true);
     return;
   }
   if (since >= ENV_MIN_GAP_MS && changedEnough(buildEnv(0), s_lastSent)) {
@@ -130,12 +137,13 @@ static void printStats() {
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
                 "\"dropped\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
-                "\"table_full_skip\":%lu,\"reports\":%lu}}\n",
+                "\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu}}\n",
                 NODE_ID, nodeBootId(), modeName(), (unsigned long)millis(), (unsigned long)t.packets,
                 (unsigned long)t.windows, (unsigned long)t.est_adv_events,
                 (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)a.rx_total,
                 (unsigned long)a.rx_soldier, (unsigned long)a.rx_relayed_skip,
-                (unsigned long)a.table_full_skip, (unsigned long)a.reports);
+                (unsigned long)a.table_full_skip, (unsigned long)a.reports,
+                (unsigned long)a.queue_full_skip);
 }
 
 // 시리얼 명령: stats | mode fixed | mode adaptive | vtemp <°C> | vtemp off | send

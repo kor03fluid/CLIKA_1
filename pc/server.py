@@ -24,6 +24,20 @@ from squadlink.virtual import SCENARIOS  # noqa: E402
 from squadlink.web import App, serve  # noqa: E402
 
 
+def positive_float(text):
+    v = float(text)
+    if not v > 0:
+        raise argparse.ArgumentTypeError("0보다 커야 합니다")
+    return v
+
+
+def ratio(text):
+    v = float(text)
+    if not 0.0 <= v <= 1.0:
+        raise argparse.ArgumentTypeError("0~1 사이여야 합니다")
+    return v
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description="SQUAD LINK PC 데이터 서버")
     p.add_argument("--serial", action="append", default=[], metavar="PORT",
@@ -33,11 +47,11 @@ def parse_args(argv=None):
                    help="가상 노드 시나리오: " + ", ".join(sorted(SCENARIOS)))
     p.add_argument("--virtual-nodes", default="",
                    help="가상으로 만들 노드 ID 목록(쉼표). 비우면 병사 1·2, 환경 0x31, 게이트웨이 앵커 0x20")
-    p.add_argument("--virtual-speed", type=float, default=1.0)
+    p.add_argument("--virtual-speed", type=positive_float, default=1.0)
     p.add_argument("--virtual-loop", action="store_true")
-    p.add_argument("--loss-rate", type=float, default=0.0, help="가상 병사 패킷 무작위 누락 비율(0~1)")
+    p.add_argument("--loss-rate", type=ratio, default=0.0, help="가상 병사 패킷 무작위 누락 비율(0~1)")
     p.add_argument("--replay", metavar="FILE", help="기록 로그(rx.jsonl) 재생")
-    p.add_argument("--replay-speed", type=float, default=1.0)
+    p.add_argument("--replay-speed", type=positive_float, default=1.0)
     p.add_argument("--host", default="0.0.0.0", help="휴대폰 접속을 위해 기본은 모든 인터페이스")
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--log-dir", default="logs")
@@ -58,7 +72,10 @@ def main(argv=None):
         app.replayer = Replayer(args.replay, hub, speed=args.replay_speed)
         app.replayer.start()
     if args.virtual:
-        nodes = [int(n, 0) for n in args.virtual_nodes.split(",") if n.strip()]
+        try:
+            nodes = [int(n, 0) for n in args.virtual_nodes.split(",") if n.strip()]
+        except ValueError:
+            sys.exit("--virtual-nodes: 쉼표로 구분한 정수여야 합니다 (예: 2 또는 1,2,0x31)")
         app.set_virtual({"scenario": args.virtual, "nodes": nodes, "speed": args.virtual_speed,
                          "loop": args.virtual_loop, "loss_rate": args.loss_rate})
 

@@ -186,7 +186,9 @@ class VAnchor:
 class Simulator:
     def __init__(self, emit, scenario="normal", nodes=None, seed=None, loop=False, loss_rate=0.0):
         if scenario not in SCENARIOS:
-            raise ValueError("unknown scenario: " + scenario)
+            raise ValueError("unknown scenario: " + str(scenario))
+        if not 0.0 <= loss_rate <= 1.0:
+            raise ValueError("loss_rate must be between 0 and 1")
         self.emit = emit
         self.scenario = scenario
         self.nodes = tuple(nodes) if nodes else ALL_NODES
@@ -318,6 +320,8 @@ class VirtualRunner(threading.Thread):
     """Simulator를 실시간(speed 배속)으로 돌려 허브에 넣는다."""
 
     def __init__(self, hub, clock=time.time, speed=1.0, **sim_kwargs):
+        if not speed > 0:
+            raise ValueError("virtual speed must be > 0")
         super().__init__(daemon=True, name="virtual")
         self.hub = hub
         self.clock = clock

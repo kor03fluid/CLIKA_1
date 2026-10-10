@@ -25,9 +25,11 @@ class JsonlLogger:
             fp.write(line + "\n")
             fp.flush()
 
-    def rx(self, ts, source, port, result, obj):
-        self._write(self._rx, {"rx_ts": ts, "source": source, "port": port, "result": result,
-                               "obj": obj})
+    def rx(self, ts, source, port, result, obj, error=None):
+        rec = {"rx_ts": ts, "source": source, "port": port, "result": result, "obj": obj}
+        if error:
+            rec["error"] = error
+        self._write(self._rx, rec)
 
     def text(self, ts, source, port, line):
         """JSON이 아닌 시리얼 줄(부팅 로그 등)."""

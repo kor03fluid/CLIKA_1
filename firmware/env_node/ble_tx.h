@@ -14,4 +14,5 @@ void bleTxBegin();
 // windows: 같은 내용을 광고할 창 수(이벤트 반복). false면 큐가 가득 차 버려짐
 bool bleTxQueue(const uint8_t* payload, uint8_t len, uint8_t windows);
 void bleTxLoop(uint32_t now);
+uint8_t bleTxFree();  // 큐에 남은 칸 수
 const TxStats& bleTxStats();

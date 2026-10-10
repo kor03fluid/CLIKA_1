@@ -6,6 +6,7 @@
 """
 
 import itertools
+import math
 import threading
 from collections import OrderedDict, deque
 
@@ -15,6 +16,10 @@ SEQ_RESYNC_GAP = 1000   # 이보다 크게 뛰면 누락으로 세지 않고 다
 
 # 통신 두절: 노드 종류별 최대 송신 간격 × 연속 누락 수 + 여유. 5초로 고정하지 않는다.
 MAX_INTERVAL_S = {"soldier": 30.0, "env": 30.0, "anchor": 15.0}
+# 이전 boot 번호의 패킷을 "늦게 온 패킷"으로 보는 시간. 이보다 오래 조용했던 boot 번호가 다시 오면
+# 플래시 초기화·카운터 순환으로 번호가 재사용된 것으로 보고 새 부팅으로 처리한다.
+STALE_BOOT_WINDOW_S = 30.0
+MAX_BOOTS_KEPT = 8
 FIXED_INTERVAL_S = 5.0  # tx_mode == "fixed" 일 때
 MISS_COUNT = 2
 GRACE_S = 5.0
@@ -67,8 +72,8 @@ class NodeState:
         self.node = node
         self.types = set()
         self.boot = None
-        self.boots_seen = set()
-        self.trackers = {}
+        self.trackers = {}      # boot -> SeqTracker (최근 MAX_BOOTS_KEPT개)
+        self.boot_last_rx = {}  # boot -> 그 boot로 마지막 정상 수신한 시각
         self.last_rx = None
         self.last_seq = None
         self.online = False
@@ -111,7 +116,7 @@ class NodeState:
             "source": self.source,
             "virtual": self.virtual,
             "via": self.via,
-            "latest": self.latest,
+            "latest": dict(self.latest),  # 패킷 dict는 만든 뒤 바꾸지 않으므로 얕은 복사로 충분
             "counters": {
                 "rx": self.rx, "dup": self.dup, "missing": self.missing_total(),
                 "relayed": self.relayed, "reboots": self.reboots, "stale_boot": self.stale_boot,
@@ -142,7 +147,7 @@ class Hub:
         self.events = deque(maxlen=max_events)
         self.events_by_id = {}
         self._ids = itertools.count(1)
-        self.totals = {"lines": 0, "packets": 0, "dup": 0, "invalid": 0, "meta": 0}
+        self.totals = {"lines": 0, "packets": 0, "dup": 0, "invalid": 0, "meta": 0, "error": 0}
         self.listeners = []
         self.version = 0  # 상태가 바뀔 때마다 증가
 
@@ -172,16 +177,22 @@ class Hub:
         """JSON 객체 하나를 처리하고 결과 문자열을 돌려준다.
 
         source: "real" | "virtual" | "replay"
-        결과: ok | dup | stale_boot | meta | invalid
+        결과: ok | dup | stale_boot | meta | invalid | error
+        예외를 밖으로 내보내지 않는다. 형식이 이상한 줄 하나가 입력 스레드를 멈추면 안 된다.
         """
         with self.lock:
             self.totals["lines"] += 1
-            result = self._ingest(obj, source, port, now)
+            error = None
+            try:
+                result = self._ingest(obj, source, port, now)
+            except Exception as e:  # 검사에서 빠진 형식 오류의 마지막 방어선
+                result, error = "error", f"{type(e).__name__}: {e}"
+                self.totals["error"] += 1
             if result == "invalid":
                 self.totals["invalid"] += 1
             if self.logger:
-                self.logger.rx(now, source, port, result, obj)
-            if result in ("ok", "meta"):
+                self.logger.rx(now, source, port, result, obj, error)
+            if result in ("ok", "meta", "error"):
                 self._changed()
             return result
 
@@ -205,10 +216,13 @@ class Hub:
             n = self.nodes[node_id] = NodeState(node_id)
 
         if boot != n.boot:
-            if boot in n.boots_seen:
-                # 이전 부팅의 늦은 패킷: 중복만 거르고 현재 상태는 바꾸지 않는다
-                tr = n.trackers.get(boot)
-                if tr is not None and not tr.add(seq):
+            last = n.boot_last_rx.get(boot)
+            current_alive = n.last_rx is not None and now - n.last_rx <= STALE_BOOT_WINDOW_S
+            if last is not None and (now - last <= STALE_BOOT_WINDOW_S or current_alive):
+                # 이전 부팅의 늦은 패킷: 중복만 거르고 현재 상태는 바꾸지 않는다.
+                # 수신 시각을 갱신하지 않으므로, 번호가 재사용된 경우에도 현재 boot가
+                # STALE_BOOT_WINDOW_S 동안 조용해지면 새 부팅으로 받아들인다.
+                if not n.trackers[boot].add(seq):
                     n.dup += 1
                     self.totals["dup"] += 1
                     return "dup"
@@ -219,11 +233,13 @@ class Hub:
                 self._event(now, node_id, "reboot", "info", {"old_boot": n.boot, "new_boot": boot},
                             source, obj)
             n.boot = boot
-            n.boots_seen.add(boot)
+            n.trackers.pop(boot, None)  # 재사용된 번호면 이전 seq 기록을 버린다
+            n.boot_last_rx.pop(boot, None)
             n.trackers[boot] = SeqTracker()
-            while len(n.trackers) > 8:
+            while len(n.trackers) > MAX_BOOTS_KEPT:
                 old = next(iter(n.trackers))
                 n.trackers.pop(old)
+                n.boot_last_rx.pop(old, None)
 
         if not n.trackers[boot].add(seq):
             n.dup += 1
@@ -231,6 +247,7 @@ class Hub:
             return "dup"
 
         self.totals["packets"] += 1
+        n.boot_last_rx[boot] = now
         n.rx += 1
         n.types.add(ptype)
         n.last_seq = seq
@@ -262,8 +279,8 @@ class Hub:
         prev = prev or {}
         if p.get("sos") and not prev.get("sos"):
             self._event(now, n.node, "sos", "critical", {"seq": p.get("seq")}, source, p)
-        alert = p.get("alert") or "none"
-        if alert != "none" and alert != (prev.get("alert") or "none"):
+        alert = str(p.get("alert") or "none")
+        if alert != "none" and alert != str(prev.get("alert") or "none"):
             level = "critical" if alert == "priority" else "warning"
             self._event(now, n.node, "alert:" + alert, level, {"reasons": p.get("reasons", [])},
                         source, p)
@@ -276,17 +293,31 @@ class Hub:
                 self._event(now, n.node, "gps_lost", "info", {}, source, p)
 
     def _env_events(self, now, n, p, source):
-        for name in p.get("events") or []:
+        events = p.get("events")
+        if not isinstance(events, list):
+            return
+        for name in events:
+            if not isinstance(name, str):
+                continue
             self._event(now, n.node, "env:" + name, ENV_EVENT_LEVEL.get(name, "info"),
                         {"temp": p.get("temp")}, source, p)
 
     def _anchor_obs(self, now, anchor_id, p):
+        obs = p.get("obs")
+        if not isinstance(obs, list):
+            return
         table = self.anchors.setdefault(anchor_id, {})
-        for o in p.get("obs") or []:
+        for o in obs:
+            if not isinstance(o, dict):
+                continue
             sid = _as_int(o.get("soldier"))
             if sid is None:
                 continue
-            seen_ts = now - (o.get("age_ms") or 0) / 1000.0
+            age_ms = o.get("age_ms")
+            if (not isinstance(age_ms, (int, float)) or isinstance(age_ms, bool)
+                    or not math.isfinite(age_ms) or age_ms < 0):
+                age_ms = 0
+            seen_ts = now - age_ms / 1000.0
             cur = table.get(sid)
             if cur is not None and cur["seen_ts"] > seen_ts:
                 continue
@@ -329,7 +360,7 @@ class Hub:
                     self.logger.event_update(now, event_id, action, by)
                 self._notify("event", ev)
                 self._changed()
-            return ev
+            return dict(ev)
 
     # ----- 주기 점검 -----
     def tick(self, now):
@@ -361,6 +392,9 @@ class Hub:
             }
 
     def list_events(self, since_id=0, limit=200):
+        """since_id보다 새 이벤트 중 최근 limit개(복사본). limit <= 0이면 빈 목록."""
         with self.lock:
-            out = [e for e in self.events if e["id"] > since_id]
+            if limit <= 0:
+                return []
+            out = [dict(e) for e in self.events if e["id"] > since_id]
             return out[-limit:]

@@ -61,6 +61,62 @@ class HubTest(unittest.TestCase):
         self.assertEqual(h.nodes[1].boot, 11)
         self.assertEqual(h.ingest(soldier(boot=10, seq=5), "real", "p", 3), "dup")
 
+    def test_reused_boot_number_is_accepted_after_window(self):
+        # 플래시 초기화로 boot 카운터가 1부터 다시 시작한 경우
+        h = Hub()
+        for i, b in enumerate((1, 2, 3)):
+            h.ingest({"type": "env", "node": 49, "boot": b, "seq": 1}, "real", "p", float(i))
+        # 현재 boot(3)가 막 수신된 동안에는 늦은 패킷으로 본다
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 2}, "real", "p", 10.0),
+                         "stale_boot")
+        # 현재 boot가 창(30초) 넘게 조용하면 새 부팅으로 받아들인다
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 1}, "real", "p", 40.0), "ok")
+        self.assertEqual(h.nodes[49].boot, 1)
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 2}, "real", "p", 41.0), "ok")
+        self.assertEqual(h.nodes[49].last_rx, 41.0)
+        self.assertEqual(kinds(h).count("reboot"), 3)
+
+    def test_malformed_fields_do_not_raise(self):
+        h = Hub()
+        cases = [
+            {"type": "anchor", "node": 49, "boot": 1, "seq": 1, "obs": [1, None, "x"]},
+            {"type": "anchor", "node": 49, "boot": 1, "seq": 2, "obs": {"soldier": 1}},
+            {"type": "anchor", "node": 49, "boot": 1, "seq": 3, "obs": [{"soldier": 1, "age_ms": "400"}]},
+            {"type": "env", "node": 49, "boot": 1, "seq": 4, "events": [{}, 3, "sound"]},
+            {"type": "env", "node": 49, "boot": 1, "seq": 5, "events": "heat"},
+            {"type": "soldier", "node": 1, "boot": 1, "seq": 1, "alert": 5, "gps": "bad"},
+        ]
+        for c in cases:
+            self.assertEqual(h.ingest(c, "real", "p", 0), "ok", c)
+        self.assertEqual(h.anchors[49][1]["seen_ts"], 0)  # 숫자가 아닌 age_ms는 0으로 본다
+        self.assertEqual(kinds(h), ["env:sound", "alert:5"])
+        self.assertEqual(h.totals["error"], 0)
+
+    def test_unexpected_exception_becomes_error_result(self):
+        h = Hub()
+        h._soldier_events = lambda *a: (_ for _ in ()).throw(KeyError("x"))
+        self.assertEqual(h.ingest(soldier(seq=1), "real", "p", 0), "error")
+        self.assertEqual(h.totals["error"], 1)
+
+    def test_snapshot_and_events_are_copies(self):
+        h = Hub()
+        h.ingest(soldier(seq=1, sos=True), "real", "p", 0)
+        snap = h.snapshot(0)
+        self.assertIsNot(snap["nodes"]["1"]["latest"], h.nodes[1].latest)
+        ev = h.list_events()[0]
+        ev["acked_at"] = 123
+        self.assertIsNone(h.list_events()[0]["acked_at"])
+        self.assertIsNot(h.mark_event(ev["id"], "ack", 1), h.events_by_id[ev["id"]])
+
+    def test_list_events_limit(self):
+        h = Hub()
+        for s in range(1, 6):
+            h.ingest(soldier(seq=s, sos=s % 2 == 1), "real", "p", s)
+        self.assertEqual(len(h.list_events()), 3)
+        self.assertEqual(h.list_events(limit=0), [])
+        self.assertEqual(h.list_events(limit=-5), [])
+        self.assertEqual([e["seq"] for e in h.list_events(limit=1)], [5])
+
     def test_invalid_and_meta(self):
         h = Hub()
         self.assertEqual(h.ingest({"type": "soldier", "node": 1}, "real", "p", 0), "invalid")
@@ -137,6 +193,8 @@ class HubTest(unittest.TestCase):
         self.assertEqual(parse_line('{"type":"env"}\r\n'), {"type": "env"})
         self.assertIsNone(parse_line("ets Jun  8 2016 00:22:57"))
         self.assertIsNone(parse_line("{broken"))
+        self.assertIsNone(parse_line('{"type":"env","temp":NaN}'))
+        self.assertIsNone(parse_line('{"type":"env","temp":Infinity}'))
 
     def test_iter_log_records_reads_server_log_and_plain_lines(self):
         lines = [

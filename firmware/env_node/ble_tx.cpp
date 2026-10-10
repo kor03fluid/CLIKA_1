@@ -89,4 +89,6 @@ void bleTxLoop(uint32_t now) {
   s_windowEnd = now + TX_WINDOW_MS;
 }
 
+uint8_t bleTxFree() { return TX_QUEUE_LEN - s_count; }
+
 const TxStats& bleTxStats() { return s_stats; }

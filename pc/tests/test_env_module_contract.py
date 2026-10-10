@@ -339,6 +339,18 @@ class EnvModuleVirtualDataTest(unittest.TestCase):
         self.assertEqual(ev[1]["uptime_ms"], 620000)              # vtemp 38
         self.assertTrue(all(e["payload"]["mode"] == "normal" for e in ev))
 
+    def test_lead_handoff_files_match_firmware_output(self):
+        # 팀장에게 보낸 줄(docs/lead_handoff_env_module)이 지금 펌웨어 출력과 같은지
+        base = os.path.join(ROOT, "docs", "lead_handoff_env_module")
+        with open(os.path.join(base, "virtual_11min.ndjson"), encoding="utf-8") as f:
+            self.assertEqual(f.read().splitlines(), self.lines)
+        with open(os.path.join(base, "samples_env_module.ndjson"), encoding="utf-8") as f:
+            samples = f.read().splitlines()
+        self.assertEqual([json.loads(l)["packet_type"] for l in samples], ["environment", "event", "anchor_observation"])
+        self.assertTrue(all(l in self.lines for l in samples))
+        readme = read("README.md", base)
+        self.assertTrue(all(l in readme for l in samples))
+
     def test_adaptive_sends_less_than_fixed(self):
         self.assertLess(len(self.of("environment")), len(self.of("environment", self.fixed)) / 2)
 

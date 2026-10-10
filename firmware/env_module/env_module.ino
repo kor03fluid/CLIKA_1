@@ -155,9 +155,9 @@ static void printStats() {
 static void printBoot() {
   diagBegin("boot");
   Serial.printf(",\"fw\":\"%s/%s\",\"tx_mode\":\"%s\",\"anchor\":%s,\"anchor_test\":%s,\"vsensor\":%s,\"use\":%s,"
-                "\"reset\":\"%s\",\"schema_version\":\"1.0\"}\n",
+                "\"board\":\"%s\",\"reset\":\"%s\",\"schema_version\":\"1.0\"}\n",
                 FW_NAME, FW_VERSION, modeName(), boolText(anchorEnabled()), boolText(anchorTestMode()),
-                boolText(sensorsVirtualMode()), useList(sensorsLatest().use_mask).c_str(), resetReason());
+                boolText(sensorsVirtualMode()), useList(sensorsLatest().use_mask).c_str(), BOARD_NAME, resetReason());
 }
 
 static void printConfig() {
@@ -418,7 +418,12 @@ static void senseTask(void*) {
 
 void setup() {
   // 기본은 송신 버퍼가 없어 printf가 다 나갈 때까지 루프를 막는다. 앵커 보고 묶음이 광고 창을 늘리지 않게 버퍼를 둔다.
+#if ARDUINO_USB_CDC_ON_BOOT && !ARDUINO_USB_MODE
+  // 칩 자체 USB(TinyUSB CDC, Nano ESP32): 버퍼 크기 대신 쓰기 대기 시간을 줄인다(PC 연결이 없으면 바로 넘어감)
+  Serial.setTxTimeoutMs(SERIAL_TX_TIMEOUT_MS);
+#else
   Serial.setTxBufferSize(SERIAL_TX_BUFFER);
+#endif
   Serial.begin(115200);
   settingsBegin();
   identBegin();

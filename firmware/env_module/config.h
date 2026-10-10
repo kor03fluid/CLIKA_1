@@ -11,6 +11,21 @@
 // ----- 핀 (ESP32 DevKit 기준, 실물 확인 후 수정) -----
 // 전원은 USB 5V. 모듈 VCC는 보드 3V3 핀에 연결하고, 5V 출력 신호를 GPIO·ADC에 직접 넣지 않는다.
 // 만능기판은 배선·고정용이다. GPIO를 늘리는 칩(멀티플렉서·IO 확장)은 쓰지 않는다: 센서 6개 = GPIO 6개 직결.
+#if defined(ARDUINO_NANO_ESP32)
+// Arduino Nano ESP32 (ESP32-S3, u-blox NORA-W106). 보드에 인쇄된 이름(D2·A0 …)을 쓴다.
+// 보드 메뉴 Pin Numbering이 기본("By Arduino pin")이든 "By GPIO number"든 이 이름이 맞는 GPIO로 바뀐다.
+// 3.3V 로직이다. 모듈 VCC는 3V3 핀, 5V가 필요하면 VBUS(USB 5V)에서 받되 출력은 분압해 넣는다.
+#define BOARD_NAME "nano_esp32"
+#define PIN_LED    LED_BUILTIN  // D13(GPIO48) 노란 LED. 광고 창 동안 켜짐
+#define PIN_DHT    D2   // GPIO5  DHT11 DATA (필수)
+#define PIN_LIGHT  A0   // GPIO1  조도 분압 출력, ADC1 (필수)
+#define PIN_SOUND  D3   // GPIO6  소리 센서 DO (추가)
+#define PIN_FLAME  D4   // GPIO7  불꽃감지 센서 DO (추가)
+#define PIN_SHOCK  D5   // GPIO8  충격 센서 DO (추가)
+#define PIN_REED   D6   // GPIO9  리드스위치(핀–GND), 내부 풀업 (추가)
+#else
+// ESP32 WROOM DevKit
+#define BOARD_NAME "esp32_wroom"
 #define PIN_LED    2   // 보드 내장 LED. 광고 창 동안 켜짐
 #define PIN_DHT    4   // DHT11 DATA (필수)
 #define PIN_LIGHT  34  // 조도 분압 출력, ADC1 입력 전용 (필수)
@@ -18,6 +33,7 @@
 #define PIN_FLAME  26  // 불꽃감지 센서 DO (추가)
 #define PIN_SHOCK  25  // 충격 센서 DO (추가)
 #define PIN_REED   33  // 리드스위치(핀–GND), 내부 풀업 (추가)
+#endif
 
 // 디지털 모듈의 반응 레벨(모듈마다 다르므로 실물로 확인)
 #define SOUND_ACTIVE_LEVEL HIGH
@@ -68,7 +84,8 @@
 #define TX_WINDOW_MS       300  // 패킷 1회 = 광고 창 1개
 #define TX_REPEAT_GAP_MS   500
 #define TX_QUEUE_LEN       6
-#define SERIAL_TX_BUFFER   4096  // USB 시리얼 송신 버퍼(바이트). 앵커 보고 묶음이 루프를 막지 않게
+#define SERIAL_TX_BUFFER   4096  // USB 시리얼 송신 버퍼(바이트, WROOM의 UART). 앵커 보고 묶음이 루프를 막지 않게
+#define SERIAL_TX_TIMEOUT_MS 50  // 보드 자체 USB(Nano ESP32의 TinyUSB CDC): PC가 포트를 열고 읽지 않을 때 쓰기 대기 한도
 
 // ----- 고정 앵커 (병사 방송 스캔 → 직접 수신 RSSI 보고) -----
 #define DEFAULT_ANCHOR          1     // 5장: 고정 앵커 역할. 시리얼 "anchor on|off"(NVS에 남김)

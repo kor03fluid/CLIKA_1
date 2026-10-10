@@ -81,17 +81,26 @@ USB 출력은 보고 루프만 쓰므로 JSON 줄이 섞이지 않는다.
 
 손으로 넣기: `vdetect sound|flame|shock|reed`(가상 모드에서만), `vtemp 38`/`vtemp off`(두 모드 모두, 켜져 있는 동안 `simulation`).
 
-## 5. 핀 (ESP32 DevKit 기준, 실물 확인 후 `config.h` 수정)
+## 5. 보드와 핀 (실물 확인 후 `config.h` 수정)
 
-| 기능 | GPIO | 비고 |
-|---|---|---|
-| DHT11 DATA | 4 | 3V3 공급. 모듈에 풀업 없으면 10kΩ |
-| 조도(분압 출력) | 34 | ADC1 입력 전용. 12bit 원시값 |
-| 소리 DO | 27 | `SOUND_ACTIVE_LEVEL` HIGH |
-| 불꽃 DO | 26 | `FLAME_ACTIVE_LEVEL` LOW |
-| 충격 DO | 25 | `SHOCK_ACTIVE_LEVEL` HIGH |
-| 리드스위치 | 33 | 핀–GND, 내부 풀업 |
-| 상태 LED | 2 | 광고 창 동안 켜짐 |
+같은 소스가 두 보드에서 빌드된다. 보드는 빌드할 때 자동으로 골라진다(`ARDUINO_NANO_ESP32`). 부팅 진단 줄의 `board`에 어느 쪽인지 나온다.
+
+| 기능 | ESP32 WROOM DevKit (GPIO) | Arduino Nano ESP32 (보드 인쇄 이름 → GPIO) | 비고 |
+|---|---|---|---|
+| DHT11 DATA | 4 | **D2** → GPIO5 | 3V3 공급. 모듈에 풀업 없으면 10kΩ |
+| 조도(분압 출력) | 34 | **A0** → GPIO1 | ADC1. 12bit 원시값 |
+| 소리 DO | 27 | **D3** → GPIO6 | `SOUND_ACTIVE_LEVEL` HIGH |
+| 불꽃 DO | 26 | **D4** → GPIO7 | `FLAME_ACTIVE_LEVEL` LOW |
+| 충격 DO | 25 | **D5** → GPIO8 | `SHOCK_ACTIVE_LEVEL` HIGH |
+| 리드스위치 | 33 | **D6** → GPIO9 | 핀–GND, 내부 풀업 |
+| 상태 LED | 2 | **D13**(LED_BUILTIN) → GPIO48 | 광고 창 동안 켜짐 |
+| 빌드 보드(FQBN) | `esp32:esp32:esp32` | `esp32:esp32:nano_nora` | 둘 다 arduino-esp32 3.3.12, 경고 없음 |
+
+Nano ESP32 차이:
+
+- ESP32-S3 칩이다. BLE는 NimBLE 스택이고 USB는 칩 자체 USB(CDC)다. 펌웨어가 두 경우를 나눠 처리하며, 데이터 형식과 판단은 같다.
+- 3.3V 로직이다. 모듈 VCC는 **3V3** 핀에 연결한다. **VBUS**는 USB 5V이므로 5V 출력 신호를 핀에 넣지 않는다.
+- Nano ESP32의 실물 동작은 아직 확인하지 않았다(빌드만 확인).
 
 - 전원은 USB 5V로 넣는다. 모듈 VCC는 보드의 **3V3 핀**에 연결한다(5V·VIN 핀에 연결하지 않음).
 - **5V 출력 신호를 GPIO·ADC에 직접 넣지 않는다.** 5V가 꼭 필요한 모듈은 분압(직렬 10kΩ + GND 쪽 20kΩ)이나 레벨 변환을 거친다.
@@ -148,7 +157,7 @@ Arduino IDE 2:
 
 1. 보드 매니저에서 **esp32 by Espressif 3.x**를 설치한다.
 2. 저장소의 `DHT-sensor-library`, `Adafruit_Sensor`, `RBD_LightSensor`를 Arduino `libraries`에 복사한다.
-3. `firmware/env_module/env_module.ino`를 열고 보드 `ESP32 Dev Module`로 업로드한다.
+3. `firmware/env_module/env_module.ino`를 열고, 보드를 `ESP32 Dev Module`(WROOM) 또는 `Arduino Nano ESP32`(esp32 by Espressif 목록 안)로 골라 업로드한다.
 
 arduino-cli(저장소 루트):
 

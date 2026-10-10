@@ -30,7 +30,11 @@ static uint16_t msToAdvUnits(uint32_t ms) { return ms * 1000 / 625; }
 void bleTxBegin() {
   BLEDevice::setPower(BLE_TX_POWER);
   s_adv = BLEDevice::getAdvertising();
-  s_adv->setAdvertisementType(ADV_TYPE_NONCONN_IND);
+#if defined(CONFIG_NIMBLE_ENABLED)
+  s_adv->setAdvertisementType(BLE_GAP_CONN_MODE_NON);  // ESP32-S3(Nano ESP32 등)은 NimBLE: 비연결 광고
+#else
+  s_adv->setAdvertisementType(ADV_TYPE_NONCONN_IND);   // ESP32(WROOM)은 Bluedroid
+#endif
   s_adv->setScanResponse(false);
   s_adv->setMinInterval(msToAdvUnits(TX_ADV_INTERVAL_MS));
   s_adv->setMaxInterval(msToAdvUnits(TX_ADV_INTERVAL_MS));

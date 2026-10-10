@@ -8,7 +8,7 @@
 |---|---|
 | 저장소 | https://github.com/kor03fluid/CLIKA_1 (브랜치 `main`) |
 | 폴더 | `firmware/env_module/` (Arduino 스케치 `env_module.ino`, 설명서는 그 폴더의 `README.md`) |
-| 펌웨어 커밋 | **`fc7781e2a1dc2c744e955957c96a332764153b4c`** (`fc7781e`). 이 커밋 이후 펌웨어 파일은 바뀌지 않았다 |
+| 펌웨어 커밋 | **`fc7781e2a1dc2c744e955957c96a332764153b4c`** (`fc7781e`). 전달 시점 기준(이후 Nano ESP32 지원 추가, USB 출력 형식은 같음) |
 | 펌웨어 판 | `fw` = `env_module/1.0.0` (부팅·`stats` 진단 줄) |
 | ZIP | `docs/C_to_lead_env_module.zip`: 펌웨어 폴더 전체, 이 문서, 예시 줄, 부록 A |
 | 빌드 | arduino-esp32 3.3.12, 보드 `ESP32 Dev Module`(`esp32:esp32:esp32`). 저장소 루트의 `DHT-sensor-library`, `Adafruit_Sensor`, `RBD_LightSensor`가 필요하다. 경고 없음, 프로그램 공간 86% |

@@ -27,7 +27,7 @@ class ScanCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice dev) override {
     s_stats.rx_total++;
     if (!dev.haveManufacturerData()) return;
-    String md = dev.getManufacturerData();
+    const auto md = dev.getManufacturerData();  // 2.x는 std::string, 3.x는 String(둘 다 c_str·length)
     PktHeader h;
     const AdvVerdict v = anchorClassify(reinterpret_cast<const uint8_t*>(md.c_str()), md.length(), s_testMode, &h);
     if (v == ADV_RELAYED) s_stats.rx_relayed_skip++;

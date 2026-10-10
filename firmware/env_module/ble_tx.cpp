@@ -1,8 +1,18 @@
+#include <Arduino.h>  // config.h의 LED_BUILTIN·HIGH 등보다 먼저(Arduino ESP32 Boards 2.x는 BLE 헤더가 이것을 넣지 않음)
 #include "ble_tx.h"
 #include "config.h"
 #include "packet.h"
 #include <BLEDevice.h>
 #include <BLEAdvertising.h>
+#include <string>
+
+// BLE 라이브러리 판 차이: arduino-esp32 2.x(Arduino ESP32 Boards 포함)는 제조사 데이터를 std::string으로 받고
+// start()가 결과를 돌려주지 않는다. 3.x는 String을 받고 bool을 돌려준다.
+#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR < 3
+#define BLE_API_2X 1
+#else
+#define BLE_API_2X 0
+#endif
 
 struct TxItem {
   uint8_t buf[PKT_MAX_PAYLOAD];
@@ -80,9 +90,15 @@ static bool startWindow(const TxItem& it) {
 
   BLEAdvertisementData data;
   data.setFlags(ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
+#if BLE_API_2X
+  data.setManufacturerData(std::string((const char*)md, 2 + it.len));
+  s_adv->setAdvertisementData(data);
+  s_adv->start();  // 2.x는 실패를 알려 주지 않는다
+#else
   data.setManufacturerData(String((const char*)md, 2 + it.len));
   s_adv->setAdvertisementData(data);
   if (!s_adv->start()) return false;
+#endif
   digitalWrite(PIN_LED, HIGH);
   return true;
 }

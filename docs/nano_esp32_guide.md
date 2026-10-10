@@ -1,7 +1,7 @@
 # Arduino Nano ESP32에 환경 모듈 펌웨어 올리기 (Windows, Arduino IDE 2)
 
 대상 펌웨어: `firmware/env_module/` (기획서 5장 환경 모듈). 같은 소스가 ESP32 WROOM과 Arduino Nano ESP32에서 빌드된다.
-빌드는 확인했다(arduino-esp32 3.3.12, `esp32:esp32:nano_nora`, 경고 없음). **Nano ESP32 실물 동작은 아직 확인하지 않았다.**
+빌드는 확인했다(arduino-esp32 3.3.12 `esp32:esp32:nano_nora`, Arduino ESP32 Boards 2.0.18 `arduino:esp32:nano_nora`, 둘 다 경고 없음). **Nano ESP32 실물 동작은 아직 확인하지 않았다.**
 아래 순서대로 해 보고, 9절의 결과를 알려 주면 된다.
 
 ## 1. 준비물
@@ -23,7 +23,7 @@
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
 3. 왼쪽 **보드 매니저** 아이콘을 누르고 `esp32`를 검색한다.
 4. **esp32 by Espressif Systems**에서 3.x(3.3.x 권장)를 설치한다. 몇 분 걸린다.
-   - "Arduino ESP32 Boards"(by Arduino)라는 다른 패키지도 있지만, 빌드를 확인한 것은 Espressif 쪽이다.
+   - **Arduino ESP32 Boards**(by Arduino, 2.0.18)로도 빌드를 확인했다. 이미 이것을 설치했다면 그대로 써도 된다(보드: Arduino ESP32 Boards → Arduino Nano ESP32).
 
 ### 2-2. 라이브러리
 
@@ -89,8 +89,10 @@
 | 증상 | 해결 |
 |---|---|
 | 도구 → 포트에 아무것도 없음 | 데이터 케이블인지 확인(다른 케이블로), 다른 USB 포트에 꽂기, 장치 관리자에 "알 수 없는 장치"가 있는지 확인 |
-| 업로드 중 `No DFU capable USB device available` 등 DFU 오류 | 보드의 **RST 버튼을 빠르게 두 번** 눌러 부트로더 모드로 넣는다 → 도구 → 포트에서 새로 잡힌 포트를 고른다 → 다시 업로드 |
-| 그래도 DFU 장치를 못 찾음(Windows 드라이버) | 보드 매니저에서 **Arduino ESP32 Boards**(by Arduino)도 한 번 설치하면 Nano ESP32용 드라이버가 같이 깔린다. 그 뒤 보드는 다시 esp32 → Arduino Nano ESP32로 고른다 |
+| 업로드 중 `No DFU capable USB device available` 등 DFU 오류 | 보드의 **RST 버튼을 빠르게 두 번** 눌러 부트로더 모드로 넣는다(RGB LED가 초록으로 천천히 밝아졌다 어두워짐) → 그 상태에서 바로 업로드. DFU는 COM 번호가 아니라 USB 장치로 찾으므로 포트 이름이 바뀌어도 된다 |
+| 그래도 DFU 장치를 못 찾음(Windows 드라이버) | 장치 관리자에서 노란 느낌표 장치(`Nano ESP32`·`DFU` 등)가 있으면 드라이버가 없는 것이다. 보드 매니저에서 **Arduino ESP32 Boards**를 제거 후 다시 설치하고, 설치 중 뜨는 드라이버 설치 창(관리자 권한)에서 **설치/예**를 누른다 |
+| 장치 관리자에 `USB JTAG/serial debug unit` 또는 `CH340`·`CP210x`로 보임 | Arduino 부트로더가 없는 보드(호환 보드 등)다. 아래 "복구 업로드"로 올린다 |
+| 복구 업로드(위 방법이 다 안 될 때) | ① 보드의 **B1 핀을 GND에 점퍼선으로 연결한 채 RST를 한 번** 누른다(칩 내장 부트로더) ② 점퍼를 뺀다 ③ 도구 → 포트에서 새로 잡힌 COM을 고른다 ④ **도구 → 프로그래머 → Esptool** ⑤ **스케치 → 프로그래머를 이용해 업로드** ⑥ 끝나면 RST를 한 번 누른다. 그 뒤로는 일반 업로드(DFU)가 다시 될 수 있다(안 되면 같은 방법으로 계속 올리면 된다) |
 | `DHT.h`·`Adafruit_Sensor.h`·`RBD_LightSensor.h: No such file` | 예전 펌웨어다. main을 다시 받는다(커밋 `36171e5` 이후는 라이브러리가 필요 없다) |
 | `ADV_TYPE_NONCONN_IND` 또는 `setTxBufferSize` 오류 | 예전 펌웨어다. main을 다시 받는다(커밋 `0632f1f` 이후) |
 | 시리얼 모니터에 아무것도 안 나옴 | 115200 확인. 업로드 직후·`reboot` 뒤에는 모니터를 닫았다 다시 연다. 3초 넘게 기다린다(첫 보고는 약 3초 뒤) |

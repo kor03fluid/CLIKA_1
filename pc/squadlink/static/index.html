@@ -3,166 +3,408 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SQUAD LINK 디버그</title>
+<title>SQUAD LINK C 시험</title>
 <style>
-  :root { --bg:#fff; --fg:#1b1b1b; --mute:#666; --line:#ddd; --card:#f6f6f6;
-          --crit:#c62828; --warn:#b26a00; --ok:#2e7d32; --virt:#6a1b9a; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#121212; --fg:#eee; --mute:#9a9a9a; --line:#333; --card:#1e1e1e;
-            --crit:#ef5350; --warn:#ffb74d; --ok:#66bb6a; --virt:#ce93d8; }
-  }
-  body { margin:0; padding:12px 16px; background:var(--bg); color:var(--fg);
-         font:14px/1.4 system-ui, sans-serif; }
-  h1 { font-size:16px; margin:0 0 4px; }
-  h2 { font-size:14px; margin:16px 0 6px; color:var(--mute); }
-  .note { color:var(--mute); font-size:12px; }
-  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  .tag { display:inline-block; white-space:nowrap; padding:0 6px; border-radius:4px; font-size:11px;
+  /* 팀장 관제 화면(squad-link/ui)과 같은 색·글꼴 체계 */
+  :root { color-scheme:dark; --bg:#101b22; --surface:#192832; --surface2:#22343d; --line:#35464e;
+          --text:#dce4e3; --muted:#8b9ca2; --cyan:#8bb7b9; --green:#a5c797; --red:#e2a28f;
+          --amber:#ccb781; --violet:#b9a6d3;
+          font-family:'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif; font-size:14px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); line-height:1.4; }
+  p, h1, h2, h3, dl, dd { margin:0; }
+  h1, h2, h3 { font-weight:600; }
+  button, select, input { font:inherit; color:inherit; max-width:100%; }
+  button { cursor:pointer; }
+  button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible {
+    outline:2px solid var(--cyan); outline-offset:2px; }
+
+  .masthead { padding:16px 32px; border-bottom:1px solid var(--line); display:flex;
+              justify-content:space-between; align-items:center; gap:24px; }
+  .brand { display:flex; align-items:center; gap:16px; min-width:0; }
+  .brand-mark { width:44px; height:44px; flex:none; display:grid; place-items:center; border:1px solid var(--cyan);
+                color:var(--cyan); font-family:Bahnschrift,Consolas,monospace; letter-spacing:.08em; }
+  .eyebrow { font-family:Consolas,monospace; font-size:10px; letter-spacing:.16em; color:var(--muted); margin-bottom:6px; }
+  h1 { font-family:Bahnschrift,'Malgun Gothic',sans-serif; font-size:24px; letter-spacing:.08em; line-height:1.1; }
+  h1 small { font-family:'Malgun Gothic',sans-serif; font-size:13px; letter-spacing:0; color:var(--muted);
+             font-weight:400; margin-left:10px; }
+  .connection { display:flex; flex-direction:column; align-items:flex-end; gap:6px; text-align:right; }
+  .badge { font-size:11px; color:var(--amber); border:1px solid var(--line); padding:3px 8px; }
+  #conn { font-size:11px; color:var(--muted); }
+  #conn:before { content:''; display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--muted);
+                 margin-right:8px; vertical-align:middle; }
+  #conn.ok { color:var(--text); } #conn.ok:before { background:var(--green); }
+  #conn.crit { color:var(--red); } #conn.crit:before { background:var(--red); }
+  #logerr { background:#382a29; color:var(--red); padding:10px 32px; border-bottom:1px solid var(--red); font-size:12px; }
+
+  main { max-width:1680px; margin:0 auto; padding:0 32px; }
+  .overview { display:flex; justify-content:space-between; align-items:flex-end; gap:16px 24px; padding:18px 0;
+              border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  .metrics { display:flex; gap:16px 28px; flex-wrap:wrap; }
+  .metric { display:flex; flex-direction:column; gap:6px; }
+  .metric span { font-size:11px; color:var(--muted); }
+  .metric strong { font-family:Bahnschrift,Consolas,monospace; font-size:26px; font-weight:400;
+                   font-variant-numeric:tabular-nums; line-height:1; }
+  .metric.ok strong { color:var(--green); } .metric.warn strong { color:var(--amber); }
+  .metric.crit strong { color:var(--red); }
+  .inputs-box .eyebrow { text-align:right; }
+  #inputs { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+
+  .tag { display:inline-block; white-space:nowrap; padding:1px 7px; font-size:10px; line-height:1.5;
          border:1px solid currentColor; }
-  .crit { color:var(--crit); } .warn { color:var(--warn); } .ok { color:var(--ok); }
-  .virt { color:var(--virt); } .mute { color:var(--mute); }
-  table { border-collapse:collapse; width:100%; font-size:13px; }
-  td, th { border-bottom:1px solid var(--line); padding:3px 4px; text-align:left; vertical-align:top; }
-  tr.stale td { opacity:.6; }
+  .ok { color:var(--green); } .warn { color:var(--amber); } .crit { color:var(--red); }
+  .virt { color:var(--violet); } .mute { color:var(--muted); } .cyan { color:var(--cyan); }
+
+  .workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1.25fr); gap:32px; padding:20px 0; }
+  .col { display:flex; flex-direction:column; gap:28px; min-width:0; }
+  .col.right { border-left:1px solid var(--line); padding-left:32px; }
+  .section-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin-bottom:12px; }
+  .section-heading h2 { font-size:15px; letter-spacing:-.02em; }
+  .section-heading span { font-size:11px; color:var(--muted); text-align:right; }
+
+  .list { display:grid; gap:6px; }
+  .card { background:var(--surface); border-left:2px solid var(--line); padding:10px 14px; min-width:0; }
+  .card.connected { border-left-color:var(--green); } .card.waiting { border-left-color:var(--amber); }
+  .card.lost { border-left-color:var(--red); } .card.stale { opacity:.72; }
+  .card-top { display:flex; justify-content:space-between; align-items:center; gap:6px 10px; flex-wrap:wrap; }
+  .card-top strong { font-size:13px; }
+  .card-top .id { font-family:Consolas,monospace; font-size:11px; color:var(--cyan); font-weight:400; margin-left:8px; }
+  .tags { display:flex; gap:4px; flex-wrap:wrap; }
+  .card-meta { display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:6px; font-size:11px; color:var(--muted); }
+  .card-meta b { color:var(--text); font-weight:400; font-variant-numeric:tabular-nums; }
+  .env-values { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; margin-top:10px; }
+  .env-values div { background:var(--bg); padding:8px 10px; min-width:0; }
+  .env-values dt { font-size:10px; color:var(--muted); }
+  .env-values dd { margin-top:6px; font-family:Bahnschrift,Consolas,monospace; font-size:22px;
+                   font-variant-numeric:tabular-nums; line-height:1; white-space:nowrap; }
+  .env-values dd small { font-size:11px; color:var(--muted); margin-left:2px; }
+  .env-values dd.na { font-family:inherit; font-size:12px; color:var(--muted); }
+  .env-values .hot dd { color:var(--red); }
+  .sensors { display:flex; gap:4px; flex-wrap:wrap; margin-top:8px; }
+  .empty { padding:24px 0; text-align:center; color:var(--muted); font-size:12px; }
+  .unassigned { background:transparent; border:1px dashed var(--line); padding:8px 14px; font-size:11px;
+                color:var(--muted); }
+  .unassigned b { color:var(--text); font-weight:400; font-family:Consolas,monospace; }
+
+  .event-tabs { display:flex; gap:24px; border-bottom:1px solid var(--line); margin-bottom:4px; }
+  .event-tabs button { border:0; border-bottom:2px solid transparent; background:none; color:var(--muted);
+                       padding:0 0 10px; font-size:12px; }
+  .event-tabs button[aria-pressed=true] { color:var(--text); border-bottom-color:var(--cyan); }
+  .event-tabs span { margin-left:6px; font-family:Consolas,monospace; color:var(--cyan); }
+  #events { max-height:440px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  .incident { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; padding:12px 0;
+              border-bottom:1px solid var(--line); align-items:center; }
+  .incident-top { display:flex; align-items:center; gap:6px 10px; flex-wrap:wrap; }
+  .event-kind { font-size:11px; color:var(--amber); letter-spacing:.04em; }
+  .incident.sos .event-kind { color:var(--red); }
+  .incident.resolved .event-kind { color:var(--muted); }
+  .incident h3 { font-size:13px; }
+  .event-meta { grid-column:1; font-size:10px; color:var(--muted); }
+  .event-actions { grid-column:2; grid-row:1 / span 3; display:flex; flex-direction:column; gap:4px; }
+  .btn { padding:7px 12px; background:transparent; border:1px solid var(--line); font-size:11px; min-height:32px;
+         color:var(--text); }
+  .btn:hover { border-color:var(--cyan); background:var(--surface); }
+  .btn.primary { color:var(--cyan); border-color:var(--cyan); }
+  .btn.good { color:var(--green); }
+
   .scroll { overflow-x:auto; }
-  button, select, input { font:inherit; max-width:100%; box-sizing:border-box; }
+  table { border-collapse:collapse; width:100%; font-size:12px; }
+  th { font-size:10px; font-weight:400; color:var(--muted); text-align:left; padding:4px 8px;
+       border-bottom:1px solid var(--line); white-space:nowrap; }
+  td { padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:middle; white-space:nowrap; }
+  td.mono, .mono { font-family:Consolas,monospace; }
+  .rssi { display:inline-flex; align-items:center; gap:8px; font-variant-numeric:tabular-nums; }
+  .bar { width:56px; height:4px; background:var(--line); position:relative; }
+  .bar i { position:absolute; left:0; top:0; bottom:0; background:var(--cyan); }
+  #issues { max-height:260px; overflow:auto; scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+  .issue { display:grid; grid-template-columns:auto auto auto minmax(0,1fr); gap:4px 10px; align-items:baseline;
+           padding:7px 0; border-bottom:1px solid var(--line); font-size:11px; }
+  .issue .msg { color:var(--muted); overflow-wrap:anywhere; }
+
+  .control { border-top:1px solid var(--line); padding:16px 0; }
+  .control summary { cursor:pointer; font-size:13px; list-style:none; }
+  .control summary::-webkit-details-marker { display:none; }
+  .control summary:before { content:'+'; display:inline-block; width:12px; color:var(--cyan); }
+  .control[open] summary:before { content:'−'; }
+  .control summary span { font-size:10px; color:var(--muted); margin-left:10px; }
+  .control-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:24px; margin-top:14px; }
+  .control-box { min-width:0; }
+  .control-box h3 { font-size:11px; font-weight:400; color:var(--muted); margin-bottom:8px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  select, input[type=text] { background:var(--surface); border:1px solid var(--line); padding:6px 10px;
+                             min-height:34px; color:var(--text); font-size:12px; }
+  input[type=text] { flex:1 1 200px; min-width:0; }
+  input::placeholder { color:var(--muted); }
+  label.check { display:inline-flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+  .chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:8px; }
+  .chips button { font-family:Consolas,monospace; font-size:10px; padding:3px 8px; background:transparent;
+                  border:1px solid var(--line); color:var(--muted); }
+  .chips button:hover { color:var(--cyan); border-color:var(--cyan); }
+  .status { font-size:11px; color:var(--amber); margin-top:8px; min-height:1.4em; }
+  #dstats { margin-top:14px; display:grid; gap:6px; }
+  .dstat { background:var(--surface); padding:8px 12px; font-size:11px; color:var(--muted); line-height:1.6; }
+  .dstat b { color:var(--text); font-weight:400; }
+  footer { display:flex; justify-content:space-between; gap:8px 16px; flex-wrap:wrap; border-top:1px solid var(--line);
+           padding:12px 0 20px; color:var(--muted); font-size:10px; }
+  footer span:last-child { font-family:Consolas,monospace; letter-spacing:.08em; }
+
+  @media (max-width:1000px) {
+    .workspace { grid-template-columns:1fr; gap:28px; }
+    .col.right { border-left:0; padding-left:0; }
+    .control-grid { grid-template-columns:1fr; }
+  }
+  @media (max-width:700px) {
+    .masthead { padding:14px 16px; gap:12px; align-items:flex-start; }
+    #logerr { padding:10px 16px; }
+    main { padding:0 16px; }
+    .brand { gap:10px; } .brand-mark { width:36px; height:36px; }
+    .eyebrow { font-size:8px; letter-spacing:.08em; }
+    h1 { font-size:19px; } h1 small { display:block; margin:4px 0 0; }
+    .connection { max-width:44%; } .badge { white-space:normal; }
+    .metrics { gap:14px 20px; } .metric strong { font-size:22px; }
+    .inputs-box .eyebrow { text-align:left; } #inputs { justify-content:flex-start; }
+    .env-values dd { font-size:18px; }
+    td, th { padding-left:4px; padding-right:4px; } .bar { width:32px; }
+    .btn { min-height:40px; }
+  }
 </style>
 </head>
 <body>
-<h1>SQUAD LINK C 시험 서버</h1>
-<div class="note">팀원 C의 환경 노드·앵커 시험용 화면. 공식 관제는 팀장 서버(8080)다. 시각은 한국 시간.</div>
-<div class="row" style="margin-top:8px">
-  <span id="conn" class="tag">연결 중</span>
-  <span id="totals" class="note"></span>
-</div>
+<header class="masthead">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">SL</span>
+    <div><p class="eyebrow">C TEST SERVER / ENV · ANCHOR</p><h1>SQUAD LINK<small>C 시험 서버</small></h1></div>
+  </div>
+  <div class="connection">
+    <span class="badge">시험용 · 공식 관제는 팀장 서버(8080)</span>
+    <span id="conn">서버 연결 중</span>
+  </div>
+</header>
+<div id="logerr" role="alert" hidden></div>
+<main>
+  <section class="overview" aria-label="수신 현황">
+    <div id="totals" class="metrics" aria-live="polite"></div>
+    <div class="inputs-box"><p class="eyebrow">INPUT</p><div id="inputs"></div></div>
+  </section>
 
-<h2>가상 노드</h2>
-<div class="row">
-  <select id="scenario"></select>
-  <input id="vnodes" placeholder="노드(예: halo_02 또는 halo_01,env_01)" size="28">
-  <label><input type="checkbox" id="vloop"> 반복</label>
-  <button id="vstart">시작</button>
-  <button id="vstop">중지</button>
-  <span id="vstatus" class="note"></span>
-</div>
+  <div class="workspace">
+    <div class="col">
+      <section aria-labelledby="env-title">
+        <div class="section-heading"><h2 id="env-title">환경 노드</h2><span>공기 온도 35°C 이상 → 열 노출 사건</span></div>
+        <div id="envs" class="list"></div>
+      </section>
+      <section aria-labelledby="soldier-title">
+        <div class="section-heading"><h2 id="soldier-title">분대원</h2><span>연결 · 출처 · 최근 측정</span></div>
+        <div id="soldiers" class="list"></div>
+      </section>
+    </div>
 
-<h2>장치 명령</h2>
-<div class="row">
-  <select id="cport"></select>
-  <input id="ccmd" placeholder="stats · mode fixed · anchor off · vtemp 38" size="36">
-  <button id="csend">보내기</button>
-  <span id="cresult" class="note"></span>
-</div>
-<div id="dstats" class="note"></div>
+    <div class="col right">
+      <section aria-labelledby="event-title">
+        <div class="section-heading"><h2 id="event-title">사건</h2><span>확인과 종료는 별도</span></div>
+        <div class="event-tabs" role="group" aria-label="사건 목록 필터">
+          <button data-tab="pending" aria-pressed="true">처리할 사건<span id="pending-count">0</span></button>
+          <button data-tab="done" aria-pressed="false">처리 완료<span id="done-count">0</span></button>
+        </div>
+        <div id="events" aria-live="polite"></div>
+      </section>
+      <section aria-labelledby="anchor-title">
+        <div class="section-heading"><h2 id="anchor-title">앵커 관측</h2><span>직접 수신 RSSI · 중계 패킷 제외</span></div>
+        <div class="scroll"><table id="anchors"></table></div>
+      </section>
+      <section aria-labelledby="issue-title">
+        <div class="section-heading"><h2 id="issue-title">최근 무효 · 경고 패킷</h2><span>최근 15건</span></div>
+        <div id="issues"></div>
+      </section>
+    </div>
+  </div>
 
-<h2>분대원</h2>
-<div class="scroll"><table id="soldiers"></table></div>
+  <details class="control" open>
+    <summary>시험 제어 <span>가상 노드 · 장치 명령 · 장치 진단</span></summary>
+    <div class="control-grid">
+      <div class="control-box">
+        <h3>가상 노드</h3>
+        <div class="row">
+          <select id="scenario" aria-label="시나리오"></select>
+          <input type="text" id="vnodes" placeholder="노드(예: halo_02 또는 halo_01,env_01)" aria-label="가상 노드">
+          <label class="check"><input type="checkbox" id="vloop"> 반복</label>
+          <button class="btn primary" id="vstart">시작</button>
+          <button class="btn" id="vstop">중지</button>
+        </div>
+        <p id="vstatus" class="status"></p>
+      </div>
+      <div class="control-box">
+        <h3>장치 명령 (USB 시리얼)</h3>
+        <div class="row">
+          <select id="cport" aria-label="포트"></select>
+          <input type="text" id="ccmd" placeholder="stats · vsensor on · vdetect sound · vtemp 38" aria-label="명령">
+          <button class="btn primary" id="csend">보내기</button>
+        </div>
+        <div class="chips" id="chips"></div>
+        <p id="cresult" class="status"></p>
+      </div>
+    </div>
+    <div id="dstats"></div>
+  </details>
 
-<h2>환경 노드</h2>
-<div class="scroll"><table id="envs"></table></div>
-
-<h2>사건</h2>
-<div class="scroll"><table id="events"></table></div>
-
-<h2>앵커 관측 (직접 수신 RSSI)</h2>
-<div class="scroll"><table id="anchors"></table></div>
-
-<h2>최근 무효·경고 패킷</h2>
-<div class="scroll"><table id="issues"></table></div>
+  <footer><span>팀원 C 환경 노드 · 앵커 시험용 화면 · 시각은 한국 시간</span><span>LOCAL / C TEST SERVER</span></footer>
+</main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const kst = (iso) => iso ? new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" }) : "-";
+const kst = (iso) => iso ? new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour12: false }) : "—";
 const CONN = { unassigned: ["장치 미배정", "mute"], waiting: ["연결 대기", "warn"],
                connected: ["연결", "ok"], lost: ["통신 두절", "crit"] };
-const EVSTATE = { open: ["미확인", "crit"], acknowledged: ["확인", "warn"], resolved: ["종료", "mute"] };
-const EVTYPE = { sos: "SOS", impact: "충격", prolonged_still: "장시간 무움직임",
+const EVSTATE = { open: ["확인 전", "crit"], acknowledged: ["지휘관 확인", "warn"], resolved: ["조치 종료", "mute"] };
+const EVTYPE = { sos: "SOS", impact: "충격 관측", prolonged_still: "장시간 무움직임",
                  heat_exposure: "환경 열 노출 주의", connection_lost: "통신 두절" };
+const MOTION = { moving: "움직임", still: "무움직임", unknown: "측정 불가" };
+const COMMANDS = ["stats", "vsensor on", "vsensor off", "vdetect sound", "vdetect flame", "vdetect shock",
+                  "vdetect reed", "vtemp 38", "vtemp off", "anchor test on", "anchor test off"];
 const tag = (pair) => `<span class="tag ${pair[1]}">${esc(pair[0])}</span>`;
 const srcTag = (source, input) => input === "replay" ? '<span class="tag virt">재생</span>'
   : source === "simulation" ? '<span class="tag virt">가상</span>'
   : source === "device" ? '<span class="tag ok">실측</span>' : "";
-const yn = (v) => v === true ? "예" : v === false ? "아니오" : "측정 불가";
 let events = [];
+let tab = "pending";
+
+function metric(label, value, cls) {
+  return `<div class="metric ${value ? cls : ""}"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
+}
 
 function renderState(s) {
-  const t = s.totals;
-  $("totals").textContent = `수신 ${t.accepted} · 중복 ${t.dup} · 지연 ${t.late + t.stale_boot} · ` +
-    `무효 ${t.invalid} · 경고 ${t.warnings} · 가려짐 ${t.shadowed} · 입력 ` +
-    ((s.inputs || []).map((i) => `${i.port}:${i.connected ? "연결" : "끊김"}`).join(", ") || "없음") +
-    (s.log && (s.log.error || s.log.dropped) ? ` · 로그 쓰기 실패(버린 줄 ${s.log.dropped}): ${s.log.error}` : "");
+  const t = s.totals || {};
+  const open = (s.event_counts || {}).open || 0;
+  $("totals").innerHTML = metric("수신", t.accepted || 0, "ok") + metric("확인 전 사건", open, "crit") +
+    metric("중복", t.dup || 0, "") + metric("지연", (t.late || 0) + (t.stale_boot || 0), "warn") +
+    metric("무효", t.invalid || 0, "crit") + metric("경고", t.warnings || 0, "warn") +
+    metric("가려짐", t.shadowed || 0, "");
+
+  const v = s.virtual || {};
+  $("inputs").innerHTML = (s.inputs || []).map((i) =>
+      `<span class="tag ${i.connected ? "ok" : "crit"}">${esc(i.port)} ${i.connected ? "연결" : "끊김"}</span>`).join("") +
+    (v.running ? `<span class="tag virt">가상 ${esc(v.scenario)} ${esc(v.t)}/${esc(v.length_s)}s</span>` : "") ||
+    '<span class="tag mute">입력 없음</span>';
+  const log = s.log || {};
+  $("logerr").hidden = !(log.error || log.dropped);
+  $("logerr").textContent = log.error || log.dropped ? `로그 쓰기 실패(버린 줄 ${log.dropped || 0}): ${log.error || ""}` : "";
   renderPorts(s.inputs);
+
   $("dstats").innerHTML = Object.values(s.device_stats || {}).map((d) => {
     const tx = d.tx || {}, a = d.anchor || {};
-    return `<div>${esc(d.node_id)} stats (${esc(kst(d.received_at))}) fw ${esc(d.fw ?? "-")}: ${esc(d.tx_mode)} · 앵커 ` +
-      `${d.anchor_enabled === false ? "끔" : "켬"}${d.anchor_test ? "(시험 모드)" : ""}` +
-      `${d.vsensor ? " · 가상 센서" : ""}${d.vtemp != null ? " · vtemp " + esc(d.vtemp) : ""} · ` +
-      `패킷 ${esc(tx.packets)} · 창 ${esc(tx.windows)} · ` +
-      `버림 ${esc(tx.dropped)} · 앵커 수신 ${esc(a.rx_soldier)} · 앵커 보고 ${esc(a.reports)}</div>`;
+    return `<div class="dstat"><b class="mono">${esc(d.node_id)}</b> stats ${esc(kst(d.received_at))} · fw <b>${esc(d.fw ?? "—")}</b>` +
+      ` · ${esc(d.tx_mode)} · 앵커 <b>${d.anchor_enabled === false ? "끔" : "켬"}${d.anchor_test ? "(시험 모드)" : ""}</b>` +
+      `${d.vsensor ? " · <b>가상 센서</b>" : ""}${d.vtemp != null ? " · vtemp <b>" + esc(d.vtemp) + "</b>" : ""}` +
+      ` · 패킷 <b>${esc(tx.packets)}</b> · 창 <b>${esc(tx.windows)}</b> · 버림 <b>${esc(tx.dropped)}</b>` +
+      ` · 앵커 수신 <b>${esc(a.rx_soldier)}</b> · 앵커 보고 <b>${esc(a.reports)}</b></div>`;
   }).join("");
-  const v = s.virtual || {};
   $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` +
     (v.note ? ` · 주의: ${v.note}` : "") : "중지";
 
-  $("soldiers").innerHTML = "<tr><th>분대원</th><th>장치</th><th>연결</th><th>출처</th><th>모드</th>" +
-    "<th>심박</th><th>움직임</th><th>위치</th><th>마지막 수신</th><th>진행 중 사건</th></tr>" +
-    s.soldiers.map((x) => {
-      const st = x.status || {};
-      const hr = x.status ? (st.heart_rate_quality === "good" ? `${esc(st.heart_rate_bpm)} bpm`
-                                                             : `측정 불가(${esc(st.heart_rate_quality)})`) : "-";
-      const loc = x.location ? (x.location.fix_valid
-          ? `${esc(x.location.latitude_deg)}, ${esc(x.location.longitude_deg)}`
-          : `미수신${x.location.location_updated_at ? " (마지막 " + esc(kst(x.location.location_updated_at)) + ")" : ""}`)
-        : "-";
-      return `<tr class="${x.data_stale && x.connection_state !== "unassigned" ? "stale" : ""}">
-        <td>${esc(x.soldier_id)}${x.name ? " " + esc(x.name) : ""}</td><td>${esc(x.assigned_node_id ?? "-")}</td>
-        <td>${tag(CONN[x.connection_state] || [x.connection_state, ""])}</td>
-        <td>${srcTag(x.source, x.input)}${x.route === "relay" ? ' <span class="tag warn">중계</span>' : ""}</td>
-        <td>${x.status ? (st.mode === "covert" ? "기도비닉" : "일반") : "-"}</td>
-        <td>${hr}</td><td>${esc(st.motion_state ?? "-")}</td><td>${loc}</td>
-        <td>${esc(kst(x.last_seen_at))}</td><td>${esc(x.active_event_ids.length || "")}</td></tr>`;
-    }).join("");
+  $("envs").innerHTML = (s.environment_nodes || []).map(envCard).join("") ||
+    '<p class="empty">환경 노드 수신 대기</p>';
+  // 장치를 배정하지 않은 분대원은 한 줄로 모은다(측정값이 없어 카드로 보일 것이 없다)
+  const soldiers = s.soldiers || [];
+  const idle = soldiers.filter((x) => x.connection_state === "unassigned");
+  $("soldiers").innerHTML = (soldiers.filter((x) => x.connection_state !== "unassigned").map(soldierCard).join("") +
+    (idle.length ? `<p class="unassigned">장치 미배정 ${idle.length}명 · ${idle.map((x) =>
+      `<b>${esc(x.soldier_id)}</b>${x.name ? " " + esc(x.name) : ""}`).join(", ")}</p>` : "")) ||
+    '<p class="empty">분대원 없음</p>';
 
-  $("envs").innerHTML = "<tr><th>노드</th><th>설치 지점</th><th>연결</th><th>출처</th><th>공기 온도</th>" +
-    "<th>습도</th><th>조도(원시값)</th><th>소리·불꽃·충격</th><th>리드 닫힘</th><th>마지막 수신</th></tr>" +
-    (s.environment_nodes.map((x) => {
-      const e = x.environment || {};
-      return `<tr class="${x.data_stale ? "stale" : ""}"><td>${esc(x.node_id)}</td><td>${esc(x.location_name ?? "-")}</td>
-        <td>${tag(CONN[x.connection_state] || [x.connection_state, ""])}</td><td>${srcTag(x.source, x.input)}</td>
-        <td>${x.environment ? esc(e.air_temperature_c ?? "측정 불가") + " °C" : "-"}</td>
-        <td>${x.environment ? esc(e.humidity_pct ?? "측정 불가") + " %" : "-"}</td>
-        <td>${x.environment ? esc(e.light_raw ?? "측정 불가") : "-"}</td>
-        <td>${x.environment ? [e.sound_detected, e.flame_detected, e.shock_detected].map(yn).map(esc).join(" · ") : "-"}</td>
-        <td>${x.environment ? esc(yn(e.reed_closed)) : "-"}</td><td>${esc(kst(x.last_seen_at))}</td></tr>`;
-    }).join("") || '<tr><td colspan="10" class="note">환경 노드 없음</td></tr>');
+  const anchors = s.anchor_observations || [];
+  $("anchors").innerHTML = anchors.length
+    ? "<tr><th>앵커</th><th>관측 노드</th><th>RSSI</th><th>관측 경과</th><th>출처</th></tr>" +
+      anchors.map((a) => {
+        const pct = Math.max(0, Math.min(100, ((a.rssi_dbm ?? -100) + 100) / 70 * 100));
+        return `<tr><td class="mono">${esc(a.anchor_id)}</td><td class="mono">${esc(a.observed_node_id)}</td>
+          <td><span class="rssi"><span class="bar"><i style="width:${pct.toFixed(0)}%"></i></span>${esc(a.rssi_dbm)} dBm</span></td>
+          <td>${esc(((a.age_ms || 0) / 1000).toFixed(1))} s</td><td>${srcTag(a.source, a.input)}</td></tr>`;
+      }).join("")
+    : '<tr><td class="empty">관측 없음 (구역 미확보)</td></tr>';
 
-  $("anchors").innerHTML = "<tr><th>앵커</th><th>관측 노드</th><th>RSSI</th><th>관측 경과</th><th>출처</th></tr>" +
-    (s.anchor_observations.map((a) => `<tr><td>${esc(a.anchor_id)}</td><td>${esc(a.observed_node_id)}</td>
-      <td>${esc(a.rssi_dbm)} dBm</td><td>${esc((a.age_ms / 1000).toFixed(1))} s</td><td>${srcTag(a.source, a.input)}</td></tr>`).join("")
-     || '<tr><td colspan="5" class="note">관측 없음(구역 미확보)</td></tr>');
-
-  const issues = [...s.recent_invalid.map((i) => ["무효", i.received_at, i.node_id, i.errors]),
-                  ...s.recent_warnings.map((i) => ["경고", i.received_at, i.node_id, i.warnings])]
+  const issues = [...(s.recent_invalid || []).map((i) => [["무효", "crit"], i.received_at, i.node_id, i.errors || []]),
+                  ...(s.recent_warnings || []).map((i) => [["경고", "warn"], i.received_at, i.node_id, i.warnings || []])]
     .sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, 15);
-  $("issues").innerHTML = "<tr><th></th><th>시각</th><th>노드</th><th>내용</th></tr>" +
-    (issues.map((i) => `<tr><td>${esc(i[0])}</td><td>${esc(kst(i[1]))}</td><td>${esc(i[2] ?? "-")}</td>
-      <td>${esc(i[3].join(" / "))}</td></tr>`).join("") || '<tr><td colspan="4" class="note">없음</td></tr>');
+  const keep = $("issues").scrollTop;
+  $("issues").innerHTML = issues.map((i) => `<div class="issue">${tag(i[0])}<span>${esc(kst(i[1]))}</span>
+      <span class="mono">${esc(i[2] ?? "—")}</span><span class="msg">${esc(i[3].join(" / "))}</span></div>`).join("") ||
+    '<p class="empty">없음</p>';
+  $("issues").scrollTop = keep;
+}
+
+function envCard(x) {
+  const e = x.environment || {};
+  const has = !!x.environment;
+  const val = (v, unit) => has && v != null ? `<dd>${esc(v)}${unit ? `<small>${unit}</small>` : ""}</dd>`
+                                           : `<dd class="na">${has ? "측정 불가" : "—"}</dd>`;
+  const hot = typeof e.air_temperature_c === "number" && e.air_temperature_c >= 35;
+  const det = (v, label) => v === undefined ? "" : v === true ? `<span class="tag crit">${label} 감지</span>`
+    : v === false ? `<span class="tag mute">${label} 없음</span>` : `<span class="tag warn">${label} 측정 불가</span>`;
+  const reed = e.reed_closed === undefined ? "" : e.reed_closed === true ? '<span class="tag ok">리드 닫힘</span>'
+    : e.reed_closed === false ? '<span class="tag warn">리드 열림</span>' : '<span class="tag warn">리드 측정 불가</span>';
+  const bad = Object.entries(e.sensor_status || {}).filter(([, st]) => st !== "ok" && st !== "disabled")
+    .map(([k, st]) => `<span class="tag warn">${esc(k)} ${esc(st)}</span>`).join("");
+  const nEv = (x.active_event_ids || []).length;
+  return `<article class="card ${esc(x.connection_state)} ${x.data_stale ? "stale" : ""}">
+    <div class="card-top"><strong>${esc(x.location_name || "환경 노드")}<span class="id">${esc(x.node_id)}</span></strong>
+      <span class="tags">${tag(CONN[x.connection_state] || [x.connection_state, ""])}${srcTag(x.source, x.input)}
+        ${nEv ? `<span class="tag crit">사건 ${nEv}</span>` : ""}</span></div>
+    <dl class="env-values">
+      <div class="${hot ? "hot" : ""}"><dt>공기 온도</dt>${val(e.air_temperature_c, "°C")}</div>
+      <div><dt>습도</dt>${val(e.humidity_pct, "%")}</div>
+      <div><dt>조도 (ADC 원시값)</dt>${val(e.light_raw, "")}</div>
+    </dl>
+    <div class="sensors">${det(e.sound_detected, "소리")}${det(e.flame_detected, "불꽃")}${det(e.shock_detected, "충격")}${reed}${bad}</div>
+    <div class="card-meta"><span>마지막 수신 <b>${esc(kst(x.last_seen_at))}</b></span>
+      ${x.heartbeat_interval_ms ? `<span>보고 주기 <b>${esc(x.heartbeat_interval_ms / 1000)}초</b></span>` : ""}</div>
+  </article>`;
+}
+
+function soldierCard(x) {
+  const st = x.status || {};
+  const hr = x.status ? (st.heart_rate_quality === "good" ? `${esc(st.heart_rate_bpm)} bpm`
+                                                         : `측정 불가(${esc(st.heart_rate_quality)})`) : "—";
+  const loc = x.location ? (x.location.fix_valid
+      ? `${esc(x.location.latitude_deg)}, ${esc(x.location.longitude_deg)}`
+      : `미수신${x.location.location_updated_at ? " (마지막 " + esc(kst(x.location.location_updated_at)) + ")" : ""}`)
+    : "—";
+  const nEv = (x.active_event_ids || []).length;
+  return `<article class="card ${esc(x.connection_state)} ${x.data_stale && x.connection_state !== "unassigned" ? "stale" : ""}">
+    <div class="card-top"><strong>${esc(x.soldier_id)}${x.name ? " " + esc(x.name) : ""}<span class="id">${esc(x.assigned_node_id ?? "장치 없음")}</span></strong>
+      <span class="tags">${tag(CONN[x.connection_state] || [x.connection_state, ""])}${srcTag(x.source, x.input)}
+        ${x.route === "relay" ? '<span class="tag warn">중계</span>' : ""}${nEv ? `<span class="tag crit">사건 ${nEv}</span>` : ""}</span></div>
+    <div class="card-meta"><span>심박 <b>${hr}</b></span><span>움직임 <b>${esc(MOTION[st.motion_state] || st.motion_state || "—")}</b></span>
+      <span>모드 <b>${x.status ? (st.mode === "covert" ? "기도비닉" : "일반") : "—"}</b></span>
+      <span>위치 <b>${loc}</b></span><span>마지막 수신 <b>${esc(kst(x.last_seen_at))}</b></span></div>
+  </article>`;
 }
 
 function renderEvents() {
-  $("events").innerHTML = "<tr><th>#</th><th>최초 수신</th><th>사건</th><th>분대원·노드</th><th>출처</th>" +
-    "<th>상태</th><th>보고 수</th><th>조작</th></tr>" +
-    events.slice().reverse().slice(0, 100).map((e) => {
-      const id = esc(e.event_id), src = esc(e.source ?? "");
-      return `<tr><td>${esc(e.n)}</td><td>${esc(kst(e.first_received_at))}</td>
-        <td class="${e.event_type === "sos" ? "crit" : ""}">${esc(EVTYPE[e.event_type] || e.event_type)}${e.late ? " (지연 수신)" : ""}</td>
-        <td>${esc(e.soldier_id ?? "-")} · ${esc(e.node_id)}</td><td>${srcTag(e.source, e.input)}</td>
-        <td>${tag(EVSTATE[e.event_state] || [e.event_state, ""])}</td><td>${esc(e.report_count)}</td>
-        <td>${e.event_state === "open" ? `<button data-a="ack" data-id="${id}" data-src="${src}">확인</button>` : esc(kst(e.acknowledged_at))}
-            ${e.event_state !== "resolved" ? `<button data-a="resolve" data-id="${id}" data-src="${src}">종료</button>` : esc(kst(e.resolved_at))}</td></tr>`;
-    }).join("");
+  const all = events.slice().reverse();
+  const pending = all.filter((e) => e.event_state !== "resolved");
+  const done = all.filter((e) => e.event_state === "resolved");
+  $("pending-count").textContent = pending.length;
+  $("done-count").textContent = done.length;
+  document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
+  const list = (tab === "pending" ? pending : done).slice(0, 100);
+  const keep = $("events").scrollTop;
+  $("events").innerHTML = list.map((e) => {
+    const id = esc(e.event_id), src = esc(e.source ?? "");
+    const who = e.soldier_id ? `${esc(e.soldier_id)} <span class="mono mute">${esc(e.node_id)}</span>` : `<span class="mono">${esc(e.node_id)}</span>`;
+    return `<article class="incident ${e.event_type === "sos" ? "sos" : ""} ${e.event_state === "resolved" ? "resolved" : ""}">
+      <div class="incident-top"><span class="event-kind">${esc(EVTYPE[e.event_type] || e.event_type)}</span><h3>${who}</h3>
+        ${tag(EVSTATE[e.event_state] || [e.event_state, ""])}${srcTag(e.source, e.input)}
+        ${e.late ? '<span class="tag warn">지연 수신</span>' : ""}</div>
+      <p class="event-meta">#${esc(e.n)} · 최초 ${esc(kst(e.first_received_at))} · 보고 ${esc(e.report_count)}회</p>
+      <p class="event-meta">확인 ${esc(kst(e.acknowledged_at))} · 종료 ${esc(kst(e.resolved_at))}</p>
+      <div class="event-actions">
+        ${e.event_state === "open" ? `<button class="btn primary" data-a="ack" data-id="${id}" data-src="${src}">확인</button>` : ""}
+        ${e.event_state !== "resolved" ? `<button class="btn good" data-a="resolve" data-id="${id}" data-src="${src}">조치 종료</button>` : ""}
+      </div></article>`;
+  }).join("") || `<p class="empty">${tab === "pending" ? "처리할 사건이 없습니다" : "처리 완료된 사건이 없습니다"}</p>`;
+  $("events").scrollTop = keep;
 }
 
 function upsertEvent(e) {
@@ -181,13 +423,18 @@ $("events").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-a]");
   if (!b) return;
   const q = b.dataset.src ? `?source=${encodeURIComponent(b.dataset.src)}` : "";
-  const r = await post(`/api/events/${encodeURIComponent(b.dataset.id)}/${b.dataset.a}${q}`, { by: "debug" });
-  if (r.event_id) { upsertEvent(r); renderEvents(); }
+  try {
+    const r = await post(`/api/events/${encodeURIComponent(b.dataset.id)}/${b.dataset.a}${q}`, { by: "debug" });
+    if (r.event_id) { upsertEvent(r); renderEvents(); }
+  } catch (e) { /* 다음 SSE 갱신에서 다시 그린다 */ }
 });
+document.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", () => {
+  tab = b.dataset.tab; renderEvents();
+}));
 $("vstart").onclick = () => post("/api/virtual", {
   enabled: true, scenario: $("scenario").value, loop: $("vloop").checked,
-  nodes: $("vnodes").value.split(",").map((x) => x.trim()).filter(Boolean) });
-$("vstop").onclick = () => post("/api/virtual", { enabled: false });
+  nodes: $("vnodes").value.split(",").map((x) => x.trim()).filter(Boolean) }).catch(() => {});
+$("vstop").onclick = () => post("/api/virtual", { enabled: false }).catch(() => {});
 
 let portsKey = null;
 function renderPorts(inputs) {  // 목록이 바뀔 때만 다시 그려 선택을 유지한다
@@ -201,26 +448,35 @@ function renderPorts(inputs) {  // 목록이 바뀔 때만 다시 그려 선택�
 }
 async function sendCmd() {
   const port = $("cport").value, cmd = $("ccmd").value.trim();
-  if (!port || !cmd) return;
-  const r = await post("/api/cmd", { port, cmd });
-  $("cresult").textContent = r.sent ? `보냄: ${cmd} (${kst(new Date().toISOString())})`
-                                    : `실패: ${r.error || "포트가 닫혀 있음"}`;
+  if (!cmd) return;
+  if (!port) { $("cresult").textContent = "시리얼 입력이 없다(2·3번 실행 설정으로 COM 포트를 열고 실행)"; return; }
+  try {
+    const r = await post("/api/cmd", { port, cmd });
+    $("cresult").textContent = r.sent ? `보냄: ${cmd} (${kst(new Date().toISOString())})`
+                                      : `실패: ${r.error || "포트가 닫혀 있음"}`;
+  } catch (e) { $("cresult").textContent = "실패: 서버 응답 없음"; }
 }
 $("csend").onclick = sendCmd;
 $("ccmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCmd(); });
+$("chips").innerHTML = COMMANDS.map((c) => `<button type="button" data-cmd="${esc(c)}">${esc(c)}</button>`).join("");
+$("chips").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-cmd]");
+  if (b) { $("ccmd").value = b.dataset.cmd; sendCmd(); }
+});
 
 fetch("/api/scenarios").then((r) => r.json()).then((list) => {
   $("scenario").innerHTML = list.map((n) => `<option ${n === "demo" ? "selected" : ""}>${esc(n)}</option>`).join("");
-});
+}).catch(() => {});
 // 사건 목록은 SSE가 (다시) 연결될 때마다 받는다. 끊긴 동안 생기거나 바뀐 사건을 놓치지 않게.
 const loadEvents = () => fetch("/api/events?limit=500").then((r) => r.json())
   .then((list) => { list.forEach(upsertEvent); renderEvents(); }).catch(() => {});
 
+renderEvents();
 const es = new EventSource("/api/stream");
 es.addEventListener("state", (m) => renderState(JSON.parse(m.data)));
 es.addEventListener("event", (m) => { upsertEvent(JSON.parse(m.data)); renderEvents(); });
-es.onopen = () => { $("conn").textContent = "서버 연결"; $("conn").className = "tag ok"; loadEvents(); };
-es.onerror = () => { $("conn").textContent = "서버 끊김"; $("conn").className = "tag crit"; };
+es.onopen = () => { $("conn").textContent = "C 시험 서버 연결"; $("conn").className = "ok"; loadEvents(); };
+es.onerror = () => { $("conn").textContent = "서버 끊김 · 갱신 중단"; $("conn").className = "crit"; };
 </script>
 </body>
 </html>

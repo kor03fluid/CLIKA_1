@@ -11,7 +11,8 @@ SQUAD LINK T4-3 환경 노드. 담당: 팀원 C. 데이터 형식은 **공통 �
 
 **검증 상태**: 빌드 검증(arduino-esp32 3.3.12, `esp32:esp32:esp32`, 경고 없음). JSON 출력 코드(`json_out.cpp`)는
 PC에서 빌드·실행해 서버의 규격 검사기로 확인하고, `boot_id`·`seq` 부여(`node.cpp`)도 PC에서 빌드해 출처별 번호와
-65535 이후 새 `boot_id`를, 송신 큐(`ble_tx.cpp`)도 PC에서 빌드해 사건·감지 우선 순서와 광고 실패 재시도를 확인한다
+65535 이후 새 `boot_id`를, 송신 큐(`ble_tx.cpp`)도 PC에서 빌드해 사건·감지 우선 순서와 광고 실패 재시도를, 센서 처리
+(`sensors.cpp`)도 PC에서 빌드해 가상 센서 모드·vtemp·열 노출 상태·DHT11 연속 실패 판정을 확인한다
 (`pc/tests/test_firmware_contract.py`). 실물 센서·무선은 미검증.
 
 ## 파일
@@ -56,7 +57,8 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
   firmware/env_node
 ```
 
-예비 WROOM은 `NODE_ID`를 `0x32`(env_02)로 바꿔 빌드한다.
+예비 WROOM은 `NODE_ID`를 `0x32`(env_02)로 바꿔 빌드한다. 펌웨어 판은 `config.h`의 `FW_VERSION`(부팅·stats 진단 줄의 `fw`)이고,
+바꿀 때마다 올려서 시험 기록과 소스(커밋)를 맞춘다. 센서 없는 보드는 `VSENSOR_DEFAULT 1`로 빌드하면 부팅 때부터 가상 센서 모드다.
 
 ## USB 시리얼 출력 (115200bps)
 
@@ -80,6 +82,9 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 - `heartbeat_interval_ms`: 지금 선언하는 정상 보고 주기. 적응 모드 평상시 30000, 열 노출·불꽃 중 10000, 고정 모드 5000.
   서버 두절 기준은 `max(15000, 3 × 주기 + 2000)` → 92초 / 32초 / 17초.
 - 열 노출 주의(`heat_exposure`)는 공기 온도 기준이다(개인 체온·과열 아님). 환경 노드에는 기도비닉 모드가 없어 `mode`는 항상 `normal`.
+- **센서 없이 시험**: `vsensor on`이면 모든 센서 값이 가상이고 패킷은 `source: "simulation"`이다(팀장 지시: 센서가 없으면
+  가상값으로 검증하고 출처를 표시). 떠 있는 센서 핀의 잡음은 감지로 잡지 않고, 감지는 `vdetect`로 넣는다. 실측·가상이 바뀔 때
+  감지 래치를 비워 한 패킷에 섞이지 않게 한다. `vsensor on`과 `vtemp 38`을 같이 쓰면 가상 열 노출 사건까지 시험할 수 있다.
 - `vtemp`로 가상 온도를 넣는 동안 `environment`와 그 온도로 생긴 사건은 `source: "simulation"`·`route: "simulation"`이다.
   DHT11 실측이 없으면(아직 연결 전 등) 습도는 가상값 50%로 채우고 `dht11: "ok"`로 낸다(패킷 전체가 가상이고,
   "dht11 ok면 온습도 모두 숫자" 규칙을 지키기 위해서).
@@ -93,8 +98,8 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 진단 줄은 `# `로 시작한다(데이터 스트림 아님. 서버는 `stats`만 보관):
 
 ```text
-# {"type":"boot","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor":true,"schema_version":"1.0"}
-# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor_enabled":true,"anchor_test":false,"uptime_ms":61234,"tx":{...},"anchor":{...}}
+# {"type":"boot","node_id":"env_01","boot_id":"boot_1a2b","fw":"0.4.0","tx_mode":"adaptive","anchor":true,"anchor_test":false,"vsensor":false,"schema_version":"1.0"}
+# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","fw":"0.4.0","tx_mode":"adaptive","anchor_enabled":true,"anchor_test":false,"vsensor":false,"vtemp":null,"uptime_ms":61234,"tx":{...},"anchor":{...}}
 # {"type":"warn","node_id":"env_01","boot_id":"boot_1a2b","msg":"unknown command: foo"}
 ```
 
@@ -109,6 +114,8 @@ ESP32 자체 부팅 메시지(ROM 로그)는 JSON이 아니어서 서버가 데�
 | `anchor off` / `anchor on` | 앵커 스캔·보고 끄기/켜기(스캔으로 늘어난 전류·송신량 비교용. 끄면 병사 표를 비움) |
 | `anchor test on` / `anchor test off` | 앵커 시험 모드: 가상(`0x02`) 원본 병사 방송(A의 가상 센서 보드)도 관측해 `source: "simulation"` 관측으로 보고. 끄면 가상 관측을 지움. 중계 패킷은 계속 제외 |
 | `vtemp 38` / `vtemp off` | 가상 온도 주입/해제(−40~100 숫자만) |
+| `vsensor on` / `vsensor off` | 가상 센서 모드: 센서가 없을 때 DHT11·조도는 가상값(24°C·50%·1800 둘레로 천천히 변함), 추가 센서 핀은 읽지 않음. 켜져 있는 동안 모든 환경 패킷·사건은 `source: "simulation"` |
+| `vdetect sound` / `flame` / `shock` / `reed` | 가상 센서 모드에서 감지 넣기(리드는 열림·닫힘 전환). 실측 중에는 거부 |
 | `send` | 환경 패킷 즉시 1회 송신 |
 
 ## BLE 무선 패킷 초안 v2 (`packet.h`) → 규격 v1 JSON

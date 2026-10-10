@@ -102,7 +102,7 @@ static void sendEnv(uint32_t now, bool urgent) {
   warnedFull = false;
   PktEnvironment p = buildEnv(sensorsTakeDetections());
   uint8_t flags = urgent ? PKT_FLAG_EVENT : 0;
-  if (sensorsLatest().virtual_temp) flags |= PKT_FLAG_SIMULATION;
+  if (sensorsLatest().simulated) flags |= PKT_FLAG_SIMULATION;
   nodeFillHeader(p.h, PKT_ENVIRONMENT, flags);
   bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), urgent ? EVENT_REPEATS : 1, urgent);  // 자리는 위에서 확인
   printEnvironmentJson(p);
@@ -151,7 +151,7 @@ static bool changedEnough(const PktEnvironment& now, const PktEnvironment& last)
 static void envTxPolicy(uint32_t now) {
   if (sensorsTakeHeatOnset()) {
     s_heatPending = true;
-    s_heatPendingSim = sensorsLatest().virtual_temp;
+    s_heatPendingSim = sensorsLatest().simulated;
   }
   if (s_heatPending && sendEvent(EV_HEAT_EXPOSURE, s_heatPendingSim)) s_heatPending = false;
 
@@ -176,17 +176,25 @@ static void envTxPolicy(uint32_t now) {
   if (since >= declaredIntervalMs()) sendEnv(now, false);
 }
 
+// 진단 줄용 vtemp 값: 숫자 또는 null
+static String vtempText() {
+  float v = sensorsVirtualTemp();
+  return isnan(v) ? String("null") : String(v, 1);
+}
+
 static void printStats() {
   const TxStats& t = bleTxStats();
   const AnchorStats& a = anchorStats();
   diagBegin("stats");
-  Serial.printf(",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"anchor_test\":%s,\"uptime_ms\":%lu,"
+  Serial.printf(",\"fw\":\"%s\",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"anchor_test\":%s,\"vsensor\":%s,"
+                "\"vtemp\":%s,\"uptime_ms\":%lu,"
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
                 "\"dropped\":%lu,\"adv_fail\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
                 "\"rx_simulation_skip\":%lu,\"rx_simulation\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu,"
                 "\"scan_restarts\":%lu}}\n",
-                modeName(), anchorEnabled() ? "true" : "false", anchorTestMode() ? "true" : "false",
+                FW_VERSION, modeName(), anchorEnabled() ? "true" : "false", anchorTestMode() ? "true" : "false",
+                sensorsVirtualSensors() ? "true" : "false", vtempText().c_str(),
                 (unsigned long)millis(), (unsigned long)t.packets,
                 (unsigned long)t.windows, (unsigned long)t.est_adv_events,
                 (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)t.adv_fail,
@@ -223,8 +231,16 @@ static void setAnchorTestCommand(bool on) {
 #endif
 }
 
+// "vdetect sound|flame|shock|reed": 가상 센서 모드에서 감지를 넣는다(리드는 열림·닫힘 전환)
+static void injectDetectionCommand(const String& what) {
+  uint8_t det = what == "sound" ? DET_SOUND : what == "flame" ? DET_FLAME : what == "shock" ? DET_SHOCK
+              : what == "reed" ? DET_REED : 0;
+  if (!det) printWarn("vdetect needs sound, flame, shock or reed", what);
+  else if (!sensorsInjectDetection(det)) printWarn("vdetect works only in vsensor mode (vsensor on)", what);
+}
+
 // 시리얼 명령: stats | mode fixed | mode adaptive | anchor on | anchor off | anchor test on | anchor test off |
-//             vtemp <°C> | vtemp off | send
+//             vsensor on | vsensor off | vdetect <sound|flame|shock|reed> | vtemp <°C> | vtemp off | send
 static void handleSerial(uint32_t now) {
   static String line;
   while (Serial.available()) {
@@ -241,6 +257,9 @@ static void handleSerial(uint32_t now) {
     else if (line == "anchor off") setAnchorCommand(false);
     else if (line == "anchor test on") setAnchorTestCommand(true);
     else if (line == "anchor test off") setAnchorTestCommand(false);
+    else if (line == "vsensor on") sensorsSetVirtualSensors(true);
+    else if (line == "vsensor off") sensorsSetVirtualSensors(false);
+    else if (line.startsWith("vdetect ")) injectDetectionCommand(line.substring(8));
     else if (line == "vtemp off") sensorsSetVirtualTemp(NAN);
     else if (line.startsWith("vtemp ")) setVirtualTempCommand(line.c_str() + 6);
     else if (line == "send") sendEnv(now, false);
@@ -258,12 +277,14 @@ void setup() {
   BLEDevice::init("");  // 이름은 광고하지 않음(페이로드 절약)
   bleTxBegin();
   sensorsBegin();
+  if (VSENSOR_DEFAULT) sensorsSetVirtualSensors(true);
 #if ANCHOR_ENABLE
   anchorBegin();
 #endif
   diagBegin("boot");
-  Serial.printf(",\"tx_mode\":\"%s\",\"anchor\":%s,\"anchor_test\":%s,\"schema_version\":\"1.0\"}\n",
-                modeName(), ANCHOR_ENABLE ? "true" : "false", anchorTestMode() ? "true" : "false");
+  Serial.printf(",\"fw\":\"%s\",\"tx_mode\":\"%s\",\"anchor\":%s,\"anchor_test\":%s,\"vsensor\":%s,"
+                "\"schema_version\":\"1.0\"}\n", FW_VERSION, modeName(), ANCHOR_ENABLE ? "true" : "false",
+                anchorTestMode() ? "true" : "false", VSENSOR_DEFAULT ? "true" : "false");
 }
 
 void loop() {

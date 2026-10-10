@@ -6,6 +6,8 @@
 // 무선 패킷의 숫자 ID와 규격 문자열 ID(안, 팀원 B와 확정. node.cpp nodeName):
 //   0x01~0x1F halo_01~  · 0x20~0x27 gateway_01~ · 0x28~0x2F relay_01~ · 0x31~0x3F env_01~
 #define NODE_ID 0x31  // env_01 (WROOM 1). 예비 WROOM은 0x32(env_02)로 빌드
+// 펌웨어 판. 부팅·stats 진단 줄의 "fw"로 나가서 시험 기록과 소스(커밋)를 맞출 수 있다. 펌웨어를 바꾸면 올린다.
+#define FW_VERSION "0.4.0"
 
 // ===== 핀 (ESP32 WROOM DevKit 기준) =====
 // 5V 출력 신호를 GPIO·ADC에 직접 넣지 않는다. 모듈은 3.3V로 공급하거나 분압·레벨 변환한다.
@@ -39,6 +41,9 @@
 #define DHT_READ_MS   2000  // DHT11은 1초 이상 간격 필요
 #define DHT_FAIL_LIMIT 3    // 이만큼 연달아 실패해야 측정 불가(null)로 본다. 그 전까지는 직전 값 유지
 #define VTEMP_HUMIDITY_PCT 50.0f  // vtemp 중 DHT11 실측 습도가 없을 때 쓰는 가상 습도(패킷은 simulation)
+#define VSENSOR_TEMP_C     24.0f  // 가상 센서 모드 기준 공기 온도(±0.4°C로 천천히 변함). vtemp가 있으면 그 값
+#define VSENSOR_LIGHT_RAW  1800   // 가상 센서 모드 기준 조도 원시값(±150)
+#define VSENSOR_DEFAULT    0      // 1이면 부팅 때부터 가상 센서 모드(센서 없는 보드 시험용). 시리얼 "vsensor on|off"
 #define LIGHT_READ_MS 500
 
 // ===== 송신 정책 =====

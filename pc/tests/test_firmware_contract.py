@@ -176,6 +176,61 @@ class FirmwareTxQueueTest(unittest.TestCase):
         self.assertEqual(self.out["stats"].split()[:2], ["adv_fail=2", "windows=1"])
 
 
+@unittest.skipIf(CXX is None, "C++ 컴파일러 없음")
+class FirmwareSensorsTest(unittest.TestCase):
+    """sensors.cpp: 센서 없는 보드의 가상 센서 모드, vtemp, 열 노출 상태 맡기·되돌리기, DHT11 연속 실패 판정."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="squadlink-fw-")
+        exe = os.path.join(cls.tmp, "host_sensors")
+        subprocess.run([CXX, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", HOST_DIR, "-I", FW_DIR,
+                        os.path.join(FW_DIR, "sensors.cpp"), os.path.join(HOST_DIR, "host_sensors.cpp"),
+                        "-o", exe], check=True, capture_output=True, text=True)
+        out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout
+        cls.step = {}
+        for line in out.splitlines():
+            name, *kv = line.split()
+            if not kv:  # "inject_off=1" 형식
+                k, v = name.split("=")
+                cls.step[k] = int(v)
+                continue
+            cls.step[name] = {k: float(v) for k, v in (x.split("=") for x in kv)}
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_no_sensor_is_unavailable(self):
+        st = self.step["nosensor"]
+        self.assertEqual((st["dht_ok"], st["sim"]), (0, 0))
+
+    def test_virtual_sensor_mode_marks_simulation_and_ignores_pins(self):
+        st = self.step["vsensor"]
+        self.assertEqual((st["dht_ok"], st["sim"], st["vsensor"], st["det"]), (1, 1, 1, 0))  # 떠 있는 핀 잡음 무시
+        self.assertAlmostEqual(st["temp"], 24.0, delta=0.5)
+        self.assertAlmostEqual(st["hum"], 50.0, delta=2.1)
+        self.assertAlmostEqual(st["light"], 1800, delta=151)
+        self.assertEqual(self.step["vdetect_sound"]["det"], 1)
+        self.assertEqual((self.step["vdetect_reed"]["reed"], self.step["vdetect_reed"]["det"]), (0, 8))
+        self.assertEqual((self.step["inject_off"], self.step["inject_device"]), (1, 0))  # 실측 중에는 가상 감지 거부
+
+    def test_vtemp_heat_state_is_kept_apart_from_real(self):
+        self.assertEqual((self.step["vtemp38"]["heat"], self.step["vtemp38"]["onset"]), (1, 1))
+        st = self.step["vsensor_off_vtemp_on"]
+        self.assertEqual((st["sim"], st["temp"], st["hum"], st["onset"]), (1, 38.0, 50.0, 0))
+        self.assertEqual((self.step["all_off"]["sim"], self.step["all_off"]["heat"]), (0, 0))
+        self.assertEqual(self.step["real36"]["onset"], 1)                 # 실측 열 노출 사건
+        st = self.step["real36_vtemp38"]
+        self.assertEqual((st["sim"], st["onset"]), (1, 1))                # 가상 사건이 따로 생김
+        st = self.step["real36_back"]
+        self.assertEqual((st["sim"], st["heat"], st["onset"]), (0, 1, 0))  # 같은 실측 노출로 사건 반복 없음
+
+    def test_dht_needs_three_failures(self):
+        self.assertEqual((self.step["dht_fail2"]["dht_ok"], self.step["dht_fail2"]["temp"]), (1, 36.0))
+        self.assertEqual(self.step["dht_fail3"]["dht_ok"], 0)
+
+
 class FirmwareSourceTest(unittest.TestCase):
     def test_only_json_out_prints_data_lines(self):
         # 데이터(JSON)는 json_out.cpp만 낸다. 다른 곳의 출력은 "# " 진단 줄이어야 한다(규격 2장).

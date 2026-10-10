@@ -96,8 +96,10 @@ function renderState(s) {
   renderPorts(s.inputs);
   $("dstats").innerHTML = Object.values(s.device_stats || {}).map((d) => {
     const tx = d.tx || {}, a = d.anchor || {};
-    return `<div>${esc(d.node_id)} stats (${esc(kst(d.received_at))}): ${esc(d.tx_mode)} · 앵커 ` +
-      `${d.anchor_enabled === false ? "끔" : "켬"} · 패킷 ${esc(tx.packets)} · 창 ${esc(tx.windows)} · ` +
+    return `<div>${esc(d.node_id)} stats (${esc(kst(d.received_at))}) fw ${esc(d.fw ?? "-")}: ${esc(d.tx_mode)} · 앵커 ` +
+      `${d.anchor_enabled === false ? "끔" : "켬"}${d.anchor_test ? "(시험 모드)" : ""}` +
+      `${d.vsensor ? " · 가상 센서" : ""}${d.vtemp != null ? " · vtemp " + esc(d.vtemp) : ""} · ` +
+      `패킷 ${esc(tx.packets)} · 창 ${esc(tx.windows)} · ` +
       `버림 ${esc(tx.dropped)} · 앵커 수신 ${esc(a.rx_soldier)} · 앵커 보고 ${esc(a.reports)}</div>`;
   }).join("");
   const v = s.virtual || {};

@@ -13,13 +13,15 @@ from squadlink.logger import JsonlLogger
 from squadlink.report import format_text, main, read_log, summarize
 
 
-def stats(uptime_ms, packets, mode="fixed", anchor_on=True, reports=0, boot="boot_e1"):
-    return {"type": "stats", "node_id": "env_01", "boot_id": boot, "tx_mode": mode,
-            "anchor_enabled": anchor_on, "uptime_ms": uptime_ms,
+def stats(uptime_ms, packets, mode="fixed", anchor_on=True, reports=0, boot="boot_e1", vsensor=False, adv_fail=0):
+    return {"type": "stats", "node_id": "env_01", "boot_id": boot, "fw": "0.4.0", "tx_mode": mode,
+            "anchor_enabled": anchor_on, "anchor_test": False, "vsensor": vsensor, "vtemp": None,
+            "uptime_ms": uptime_ms,
             "tx": {"packets": packets, "windows": packets * 2, "est_adv_events": packets * 30,
-                   "payload_bytes": packets * 21, "dropped": 0},
+                   "payload_bytes": packets * 21, "dropped": 0, "adv_fail": adv_fail},
             "anchor": {"rx_total": 0, "rx_soldier": reports * 10, "rx_relayed_skip": 0, "rx_simulation_skip": 0,
-                       "table_full_skip": 0, "reports": reports, "queue_full_skip": 0}}
+                       "rx_simulation": 0, "table_full_skip": 0, "reports": reports, "queue_full_skip": 0,
+                       "scan_restarts": 0}}
 
 
 def via(pkt, gateway_id):
@@ -52,8 +54,11 @@ class ReportFromServerLogTest(unittest.TestCase):
         hub.ingest({"schema_version": "1.0"}, "serial", "COM5")  # 무효
         log.text(clock.wall(), "serial", "COM7", "ets Jun  8 2016 00:22:57")
         # stats: 고정 60초 → 고정에서 적응으로 전환한 구간 → 적응 600초
+        hub.ingest_diag({"type": "boot", "node_id": "env_01", "boot_id": "boot_e1", "fw": "0.4.0",
+                         "tx_mode": "adaptive", "anchor": True, "anchor_test": False, "vsensor": True,
+                         "schema_version": "1.0"}, "serial", "COM7")
         for d in (stats(10000, 5), stats(70000, 17, reports=4), stats(80000, 18, mode="adaptive"),
-                  stats(680000, 38, mode="adaptive", anchor_on=False)):
+                  stats(680000, 38, mode="adaptive", anchor_on=False, vsensor=True, adv_fail=2)):
             hub.ingest_diag(d, "serial", "COM7")
         log.close()
         cls.rep = summarize(read_log(log.dir))  # 폴더를 주면 rx.jsonl을 읽는다
@@ -67,7 +72,7 @@ class ReportFromServerLogTest(unittest.TestCase):
 
     def test_results_and_period(self):
         r = self.rep["results"]
-        self.assertEqual((r["invalid"], r["text"], r["diag"]), (1, 1, 4))
+        self.assertEqual((r["invalid"], r["text"], r["diag"]), (1, 1, 5))
         self.assertGreater(self.rep["period"]["seconds"], 0)
 
     def test_node_counts(self):
@@ -88,6 +93,17 @@ class ReportFromServerLogTest(unittest.TestCase):
                          [("fixed", True, 60.0, 12), ("전환 포함", True, 10.0, 1),
                           ("adaptive", "전환 포함", 600.0, 20)])
         self.assertEqual((rows[0]["tx_packets_per_min"], rows[0]["anchor_reports"]), (12.0, 4))
+
+    def test_conditions_and_errors(self):
+        (c,) = self.rep["conditions"]
+        self.assertEqual((c["fw"], c["vsensor"], c["anchor_test"]), ("0.4.0", True, False))
+        self.assertEqual(self.rep["tx_intervals"][2]["vsensor"], "전환 포함")
+        er = self.rep["errors"]
+        self.assertEqual((er["invalid_lines"], er["text_lines"]), (1, 1))
+        (b,) = er["by_boot"]
+        self.assertEqual((b["uptime_s"], b["tx_adv_fail"], b["tx_dropped"]), (680.0, 2, 0))
+        self.assertIn("[오류]", format_text(self.rep))
+        self.assertIn("[시험 조건]", format_text(self.rep))
 
     def test_anchor_and_events(self):
         (a,) = self.rep["anchors"]

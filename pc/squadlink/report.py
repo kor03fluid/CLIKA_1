@@ -14,6 +14,8 @@
   그 모드의 값으로 본다(다르면 "전환 포함").
 - 앵커 관측: 앵커·병사 쌍마다 RSSI 평균·표준편차·최소·최대, 관측 경과 중앙값
 - 사건: 출처·종류별 사건 수와 보고 수
+- 시험 조건: 부팅 진단 줄의 펌웨어 판(fw)·송신 모드·앵커·앵커 시험 모드·가상 센서 모드
+- 오류: boot마다 마지막 stats의 누적 오류(버림·광고 실패·앵커 표 가득·큐밀림·스캔 재시작)와 서버 판정 무효·처리 오류 줄 수
 """
 
 import json
@@ -31,6 +33,12 @@ KST = timezone(timedelta(hours=9))
 TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped", "adv_fail")
 ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "rx_simulation",
                "table_full_skip", "reports", "queue_full_skip", "scan_restarts")
+# 부팅 진단 줄에서 시험 조건으로 남길 값
+BOOT_KEYS = ("node_id", "boot_id", "fw", "tx_mode", "anchor", "anchor_test", "vsensor")
+# stats의 누적 오류 카운터
+ERROR_KEYS = (("tx", "dropped"), ("tx", "adv_fail"), ("anchor", "table_full_skip"), ("anchor", "queue_full_skip"),
+              ("anchor", "scan_restarts"))
+
 # 서버가 검사를 통과시킨 줄의 판정. 이 줄들의 obj만 노드별로 센다.
 ACCEPTED_RESULTS = ("ok", "late", "stale_boot", "dup", "shadowed")
 
@@ -89,6 +97,7 @@ def summarize(records):
     anchors = defaultdict(lambda: {"rssi": [], "age": []})
     events = defaultdict(lambda: {"ids": set(), "reports": 0})
     stats_lines = defaultdict(list)  # (node_id, boot_id) -> [stats diag]
+    boots = []                       # 부팅 진단 줄
 
     for ts, result, obj in records:
         results[result if result is not None else "raw"] += 1
@@ -97,6 +106,8 @@ def summarize(records):
         if result == "diag":
             if isinstance(obj, dict) and obj.get("type") == "stats":
                 stats_lines[(obj.get("node_id"), obj.get("boot_id"))].append(obj)
+            elif isinstance(obj, dict) and obj.get("type") == "boot":
+                boots.append({k: obj.get(k) for k in BOOT_KEYS})
             continue
         if (result is not None and result not in ACCEPTED_RESULTS) or not isinstance(obj, dict):
             continue
@@ -133,6 +144,8 @@ def summarize(records):
         "nodes": _node_rows(nodes),
         "paths": _path_rows(nodes),
         "tx_intervals": _tx_intervals(stats_lines),
+        "conditions": boots,
+        "errors": _errors(stats_lines, results),
         "anchors": [_anchor_row(k, a) for k, a in sorted(anchors.items(), key=lambda kv: tuple(map(str, kv[0])))],
         "events": [{"source": s, "event_type": et, "events": len(e["ids"]), "reports": e["reports"]}
                    for (s, et), e in sorted(events.items(), key=lambda kv: tuple(map(str, kv[0])))],
@@ -221,8 +234,9 @@ def _tx_intervals(stats_lines):
             if dur <= 0:
                 continue
             row = {"node_id": node_id, "boot_id": boot_id, "from_uptime_s": round(a["uptime_ms"] / 1000, 1),
-                   "seconds": round(dur / 1000, 1), "tx_mode": _label(a, b, "tx_mode"),
-                   "anchor_enabled": _label(a, b, "anchor_enabled")}
+                   "seconds": round(dur / 1000, 1), "fw": _label(a, b, "fw"), "tx_mode": _label(a, b, "tx_mode"),
+                   "anchor_enabled": _label(a, b, "anchor_enabled"), "anchor_test": _label(a, b, "anchor_test"),
+                   "vsensor": _label(a, b, "vsensor"), "vtemp": _label(a, b, "vtemp")}
             for group, keys in (("tx", TX_KEYS), ("anchor", ANCHOR_KEYS)):
                 for k in keys:
                     va, vb = _num(a.get(group), k), _num(b.get(group), k)
@@ -231,6 +245,22 @@ def _tx_intervals(stats_lines):
             row["tx_packets_per_min"] = round(p * 60000.0 / dur, 2) if p is not None else None
             rows.append(row)
     return rows
+
+
+def _errors(stats_lines, results):
+    """boot마다 마지막 stats의 누적 오류 카운터와, 로그 전체의 무효·처리 오류·JSON 아닌 줄 수."""
+    rows = []
+    for (node_id, boot_id), lines in sorted(stats_lines.items(), key=lambda kv: tuple(map(str, kv[0]))):
+        lines = [s for s in lines if _num(s, "uptime_ms") is not None]
+        if not lines:
+            continue
+        last = max(lines, key=lambda s: s["uptime_ms"])
+        row = {"node_id": node_id, "boot_id": boot_id, "uptime_s": round(last["uptime_ms"] / 1000, 1)}
+        for group, k in ERROR_KEYS:
+            row[f"{group}_{k}"] = _num(last.get(group), k)
+        rows.append(row)
+    return {"by_boot": rows, "invalid_lines": results.get("invalid", 0), "error_lines": results.get("error", 0),
+            "text_lines": results.get("text", 0)}
 
 
 def _anchor_row(key, a):
@@ -274,16 +304,29 @@ def format_text(rep):
     lines.append(_table(["node_id", "source", "gateway_id", "받음", "송신분", "수신률%"],
                         [[x["node_id"], x["source"], x["gateway_id"], x["packets"], x["sent"], x["received_pct"]]
                          for x in rep["paths"]]))
+    if rep["conditions"]:
+        lines += ["", "[시험 조건] 부팅 진단 줄"]
+        lines.append(_table(["node_id", "boot", "fw", "tx_mode", "앵커", "앵커시험", "가상센서"],
+                            [[c["node_id"], c["boot_id"], c["fw"], c["tx_mode"], c["anchor"], c["anchor_test"],
+                              c["vsensor"]] for c in rep["conditions"]]))
     if rep["tx_intervals"]:
         lines += ["", "[환경 노드 송신량] stats 진단 줄 사이 차이 (est_adv는 추정치)"]
         lines.append(_table(
-            ["node_id", "boot", "시작s", "구간s", "tx_mode", "앵커", "패킷", "분당", "창", "est_adv", "바이트",
-             "버림", "광고실패", "앵커수신", "앵커보고", "큐밀림", "스캔재시작"],
+            ["node_id", "boot", "시작s", "구간s", "tx_mode", "앵커", "앵커시험", "가상센서", "패킷", "분당", "창",
+             "est_adv", "바이트", "버림", "광고실패", "앵커수신", "앵커가상", "앵커보고", "큐밀림", "스캔재시작"],
             [[x["node_id"], x["boot_id"], x["from_uptime_s"], x["seconds"], x["tx_mode"], x["anchor_enabled"],
-              x["tx_packets"], x["tx_packets_per_min"], x["tx_windows"], x["tx_est_adv_events"],
-              x["tx_payload_bytes"], x["tx_dropped"], x["tx_adv_fail"], x["anchor_rx_soldier"],
-              x["anchor_reports"], x["anchor_queue_full_skip"], x["anchor_scan_restarts"]]
-             for x in rep["tx_intervals"]]))
+              x["anchor_test"], x["vsensor"], x["tx_packets"], x["tx_packets_per_min"], x["tx_windows"],
+              x["tx_est_adv_events"], x["tx_payload_bytes"], x["tx_dropped"], x["tx_adv_fail"],
+              x["anchor_rx_soldier"], x["anchor_rx_simulation"], x["anchor_reports"], x["anchor_queue_full_skip"],
+              x["anchor_scan_restarts"]] for x in rep["tx_intervals"]]))
+    er = rep["errors"]
+    lines += ["", f"[오류] 서버 판정 무효 {er['invalid_lines']} · 처리 오류 {er['error_lines']} · JSON 아닌 줄 {er['text_lines']}"
+                  " (아래는 boot마다 마지막 stats의 누적값)"]
+    if er["by_boot"]:
+        lines.append(_table(["node_id", "boot", "uptime s", "버림", "광고실패", "앵커표가득", "큐밀림", "스캔재시작"],
+                            [[x["node_id"], x["boot_id"], x["uptime_s"], x["tx_dropped"], x["tx_adv_fail"],
+                              x["anchor_table_full_skip"], x["anchor_queue_full_skip"], x["anchor_scan_restarts"]]
+                             for x in er["by_boot"]]))
     if rep["anchors"]:
         lines += ["", "[앵커 관측 RSSI]"]
         lines.append(_table(["anchor_id", "병사 노드", "source", "보고", "평균", "표준편차", "최소", "최대",

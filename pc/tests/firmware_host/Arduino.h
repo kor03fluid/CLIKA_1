@@ -10,9 +10,33 @@
 #define HIGH 1
 #define LOW 0
 #define OUTPUT 1
+#define INPUT 0
+#define INPUT_PULLUP 2
+#define RISING 1
+#define FALLING 2
+#define IRAM_ATTR
+
+#include <math.h>  // Arduino처럼 isnan·sinf·lroundf를 전역 이름으로
+using std::isnan;
 
 inline void pinMode(uint8_t, uint8_t) {}
 inline void digitalWrite(uint8_t, uint8_t) {}
+inline void analogReadResolution(int) {}
+
+// 시험이 정하는 핀 입력과 인터럽트(핀 번호별)
+extern int g_pin_level[64];
+extern void (*g_isr[64])();
+inline int digitalRead(uint8_t pin) { return g_pin_level[pin]; }
+inline int digitalPinToInterrupt(int pin) { return pin; }
+inline void attachInterrupt(int pin, void (*fn)(), int) { g_isr[pin] = fn; }
+
+// FreeRTOS 잠금 대체(단일 스레드 시험)
+struct portMUX_TYPE { int unused; };
+#define portMUX_INITIALIZER_UNLOCKED {0}
+#define portENTER_CRITICAL(m) ((void)(m))
+#define portEXIT_CRITICAL(m) ((void)(m))
+#define portENTER_CRITICAL_ISR(m) ((void)(m))
+#define portEXIT_CRITICAL_ISR(m) ((void)(m))
 
 struct String {
   std::string s;

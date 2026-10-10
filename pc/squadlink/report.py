@@ -1,0 +1,292 @@
+"""로그 요약: 실물 시험에서 기록할 수신·누락·송신량을 한 번에 뽑는다.
+
+입력은 서버 로그(logs/<시각>/rx.jsonl 또는 그 폴더)나, 장치 USB 출력을 그대로 저장한 NDJSON 파일이다.
+서버 판정(result)은 전체 집계에만 쓰고, 노드별 수치는 패킷의 source·node_id·boot_id·seq로 다시 센다.
+
+- 노드별: 고유 패킷 수, 중복, 누락(boot마다 받은 seq 범위 안의 빈 번호), 손실률, 분당 패킷(장치 uptime 기준)
+- 경로별: 어떤 gateway_id로 몇 개가 들어왔는지. 노드가 USB로 자기 송신분을 함께 내면(환경 노드)
+  그것을 보낸 목록으로 보고 다른 게이트웨이의 BLE 수신률을 계산한다.
+- 환경 노드 송신량: "stats" 진단 줄 사이의 차이(같은 boot). 구간 양 끝의 tx_mode·anchor_enabled가 같아야
+  그 모드의 값으로 본다(다르면 "전환 포함").
+- 앵커 관측: 앵커·병사 쌍마다 RSSI 평균·표준편차·최소·최대, 관측 경과 중앙값
+- 사건: 출처·종류별 사건 수와 보고 수
+"""
+
+import json
+import os
+import statistics
+from collections import Counter, defaultdict
+from datetime import datetime, timedelta, timezone
+
+from .ingest import classify_line
+
+KST = timezone(timedelta(hours=9))
+TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped")
+ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "table_full_skip",
+               "reports", "queue_full_skip")
+HEADER_KEYS = ("packet_type", "node_id", "boot_id", "seq", "source", "uptime_ms", "payload", "transport")
+
+
+def _is_int(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def _usable(obj):
+    """노드별로 셀 수 있는 패킷인가(검사기보다 느슨하게, 집계에 필요한 키만 본다)."""
+    return (isinstance(obj, dict) and all(k in obj for k in HEADER_KEYS)
+            and isinstance(obj["node_id"], str) and isinstance(obj["boot_id"], str)
+            and _is_int(obj["seq"]) and _is_int(obj["uptime_ms"])
+            and isinstance(obj["payload"], dict) and isinstance(obj["transport"], dict))
+
+
+def read_log(path):
+    """(rx_ts 또는 None, result, 객체) 목록. result: 서버 판정, "diag", "text", 또는 None(원시 NDJSON)."""
+    if os.path.isdir(path):
+        path = os.path.join(path, "rx.jsonl")
+    out = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            kind, obj = classify_line(line)
+            if kind == "diag":
+                out.append((None, "diag", obj))
+            elif kind != "data":
+                out.append((None, "text", None))
+            elif "rx_ts" in obj and "result" in obj:  # 서버 로그 한 줄
+                ts = obj["rx_ts"] if isinstance(obj["rx_ts"], (int, float)) else None
+                res = obj["result"]
+                body = obj.get("diag") if res == "diag" else obj.get("obj")
+                out.append((ts, res, body))
+            else:
+                out.append((None, None, obj))
+    return out
+
+
+class _NodeAcc:
+    def __init__(self):
+        self.copies = 0
+        self.seen = defaultdict(set)        # boot -> {seq}
+        self.uptime = {}                    # boot -> [min, max]
+        self.types = Counter()
+        self.paths = defaultdict(lambda: defaultdict(set))  # gateway_id -> boot -> {seq}
+        self.routes = Counter()
+
+
+def _span(values):
+    return (min(values), max(values)) if values else (None, None)
+
+
+def _iso_kst(ts):
+    return datetime.fromtimestamp(ts, KST).strftime("%Y-%m-%d %H:%M:%S") if ts is not None else None
+
+
+def summarize(records):
+    results = Counter()
+    times = []
+    nodes = defaultdict(_NodeAcc)
+    anchors = defaultdict(lambda: {"rssi": [], "age": [], "keys": set()})
+    events = defaultdict(lambda: {"ids": set(), "reports": 0})
+    stats_lines = defaultdict(list)  # (node_id, boot_id) -> [stats diag]
+
+    for ts, result, obj in records:
+        results[result if result is not None else "raw"] += 1
+        if ts is not None:
+            times.append(ts)
+        if result == "diag":
+            if isinstance(obj, dict) and obj.get("type") == "stats":
+                stats_lines[(obj.get("node_id"), obj.get("boot_id"))].append(obj)
+            continue
+        if result in ("invalid", "error", "text") or not _usable(obj):
+            continue
+        key = (obj["node_id"], obj["source"])
+        n = nodes[key]
+        boot, seq, t = obj["boot_id"], obj["seq"], obj["transport"]
+        n.copies += 1
+        gw = t.get("gateway_id") if isinstance(t.get("gateway_id"), str) else "?"
+        n.paths[gw][boot].add(seq)
+        n.routes[(gw, t.get("route"))] += 1
+        if seq in n.seen[boot]:
+            continue  # 같은 패킷의 다른 사본(반복 광고·다른 경로)
+        n.seen[boot].add(seq)
+        span = n.uptime.setdefault(boot, [obj["uptime_ms"], obj["uptime_ms"]])
+        span[0], span[1] = min(span[0], obj["uptime_ms"]), max(span[1], obj["uptime_ms"])
+        ptype, p = obj["packet_type"], obj["payload"]
+        n.types[ptype] += 1
+        if ptype == "anchor_observation":
+            a = anchors[(p.get("anchor_id"), p.get("observed_node_id"), obj["source"])]
+            if isinstance(p.get("rssi_dbm"), (int, float)):
+                a["rssi"].append(p["rssi_dbm"])
+            if _is_int(p.get("observation_age_ms")):
+                a["age"].append(p["observation_age_ms"])
+        elif ptype == "event" and isinstance(p.get("event_id"), str):
+            e = events[(obj["source"], p.get("event_type"))]
+            e["ids"].add(p["event_id"])
+            e["reports"] += 1
+
+    t0, t1 = _span(times)
+    return {
+        "period": {"start": _iso_kst(t0), "end": _iso_kst(t1),
+                   "seconds": round(t1 - t0, 1) if t0 is not None else None},
+        "results": dict(results),
+        "nodes": [_node_row(node_id, source, n) for (node_id, source), n in sorted(nodes.items())],
+        "paths": _path_rows(nodes),
+        "tx_intervals": _tx_intervals(stats_lines),
+        "anchors": [_anchor_row(k, a) for k, a in sorted(anchors.items(), key=lambda kv: tuple(map(str, kv[0])))],
+        "events": [{"source": s, "event_type": et, "events": len(e["ids"]), "reports": e["reports"]}
+                   for (s, et), e in sorted(events.items(), key=lambda kv: tuple(map(str, kv[0])))],
+    }
+
+
+def _node_row(node_id, source, n):
+    packets = sum(len(s) for s in n.seen.values())
+    missing = sum(max(s) - min(s) + 1 - len(s) for s in n.seen.values())
+    span_ms = sum(hi - lo for lo, hi in n.uptime.values())
+    return {
+        "node_id": node_id, "source": source, "packets": packets, "copies": n.copies,
+        "dup": n.copies - packets, "missing": missing,
+        "loss_pct": round(100.0 * missing / (packets + missing), 2) if packets else None,
+        "boots": len(n.seen), "per_min": round(packets * 60000.0 / span_ms, 2) if span_ms > 0 else None,
+        "types": dict(sorted(n.types.items())),
+        "routes": {f"{gw}/{route}": c for (gw, route), c in sorted(n.routes.items(), key=lambda kv: str(kv[0]))},
+    }
+
+
+def _path_rows(nodes):
+    """게이트웨이별 수신 수. 노드 자신이 USB로 낸 사본(gateway_id == node_id)이 있으면 그것을 보낸 목록으로 본다."""
+    rows = []
+    for (node_id, source), n in sorted(nodes.items()):
+        sent = n.paths.get(node_id)
+        for gw, boots in sorted(n.paths.items()):
+            got = sum(len(s) for s in boots.values())
+            row = {"node_id": node_id, "source": source, "gateway_id": gw, "packets": got,
+                   "sent": None, "received_pct": None}
+            if sent is not None and gw != node_id:
+                # 이 게이트웨이가 켜져 있던 범위(boot마다 받은 seq 범위)의 송신분만 분모로 쓴다
+                total = hit = 0
+                for boot, seqs in boots.items():
+                    lo, hi = min(seqs), max(seqs)
+                    own = {s for s in sent.get(boot, ()) if lo <= s <= hi}
+                    total += len(own)
+                    hit += len(own & seqs)
+                if total:
+                    row["sent"], row["packets"] = total, hit
+                    row["received_pct"] = round(100.0 * hit / total, 2)
+            rows.append(row)
+    return rows
+
+
+def _num(d, k):
+    v = d.get(k) if isinstance(d, dict) else None
+    return v if _is_int(v) else None
+
+
+def _label(a, b, key):
+    va, vb = a.get(key), b.get(key)
+    if va is None and vb is None:
+        return None
+    return va if va == vb else "전환 포함"
+
+
+def _tx_intervals(stats_lines):
+    rows = []
+    for (node_id, boot_id), lines in sorted(stats_lines.items(), key=lambda kv: tuple(map(str, kv[0]))):
+        lines = [s for s in lines if _num(s, "uptime_ms") is not None]
+        lines.sort(key=lambda s: s["uptime_ms"])
+        for a, b in zip(lines, lines[1:]):
+            dur = b["uptime_ms"] - a["uptime_ms"]
+            if dur <= 0:
+                continue
+            row = {"node_id": node_id, "boot_id": boot_id, "from_uptime_s": round(a["uptime_ms"] / 1000, 1),
+                   "seconds": round(dur / 1000, 1), "tx_mode": _label(a, b, "tx_mode"),
+                   "anchor_enabled": _label(a, b, "anchor_enabled")}
+            for group, keys in (("tx", TX_KEYS), ("anchor", ANCHOR_KEYS)):
+                for k in keys:
+                    va, vb = _num(a.get(group), k), _num(b.get(group), k)
+                    row[f"{group}_{k}"] = vb - va if va is not None and vb is not None else None
+            p = row["tx_packets"]
+            row["tx_packets_per_min"] = round(p * 60000.0 / dur, 2) if p is not None else None
+            rows.append(row)
+    return rows
+
+
+def _anchor_row(key, a):
+    anchor_id, observed, source = key
+    r = a["rssi"]
+    return {"anchor_id": anchor_id, "observed_node_id": observed, "source": source, "reports": len(r),
+            "rssi_mean": round(statistics.fmean(r), 1) if r else None,
+            "rssi_sd": round(statistics.pstdev(r), 1) if len(r) > 1 else None,
+            "rssi_min": min(r) if r else None, "rssi_max": max(r) if r else None,
+            "age_median_ms": statistics.median(a["age"]) if a["age"] else None}
+
+
+# ----- 출력 -----
+def _table(headers, rows):
+    cells = [[("-" if v is None else str(v)) for v in row] for row in rows]
+    widths = [max([_w(h)] + [_w(c[i]) for c in cells]) for i, h in enumerate(headers)]
+    out = ["  ".join(_pad(h, widths[i]) for i, h in enumerate(headers)).rstrip()]
+    out += ["  ".join(_pad(c[i], widths[i]) for i in range(len(headers))).rstrip() for c in cells]
+    return "\n".join(out)
+
+
+def _w(s):  # 한글은 두 칸
+    return sum(2 if ord(ch) > 0x1100 else 1 for ch in s)
+
+
+def _pad(s, width):
+    return s + " " * (width - _w(s))
+
+
+def format_text(rep):
+    p, r = rep["period"], rep["results"]
+    lines = [f"기간(KST): {p['start'] or '-'} ~ {p['end'] or '-'} ({p['seconds'] if p['seconds'] is not None else '-'}초)",
+             "줄 판정: " + (" · ".join(f"{k} {v}" for k, v in sorted(r.items())) or "없음"), ""]
+    lines.append("[노드별 수신] 누락 = boot마다 받은 seq 범위 안의 빈 번호, 분당 = 장치 uptime 기준")
+    lines.append(_table(
+        ["node_id", "source", "패킷", "중복", "누락", "손실%", "boot", "분당", "종류"],
+        [[n["node_id"], n["source"], n["packets"], n["dup"], n["missing"], n["loss_pct"], n["boots"],
+          n["per_min"], ", ".join(f"{k} {v}" for k, v in n["types"].items())] for n in rep["nodes"]]))
+    lines += ["", "[경로별 수신] 수신률 = 노드가 USB로 낸 송신분 중 그 게이트웨이가 받은 비율"]
+    lines.append(_table(["node_id", "source", "gateway_id", "받음", "송신분", "수신률%"],
+                        [[x["node_id"], x["source"], x["gateway_id"], x["packets"], x["sent"], x["received_pct"]]
+                         for x in rep["paths"]]))
+    if rep["tx_intervals"]:
+        lines += ["", "[환경 노드 송신량] stats 진단 줄 사이 차이 (est_adv는 추정치)"]
+        lines.append(_table(
+            ["node_id", "boot", "시작s", "구간s", "tx_mode", "앵커", "패킷", "분당", "창", "est_adv", "바이트",
+             "버림", "앵커수신", "앵커보고", "큐밀림"],
+            [[x["node_id"], x["boot_id"], x["from_uptime_s"], x["seconds"], x["tx_mode"], x["anchor_enabled"],
+              x["tx_packets"], x["tx_packets_per_min"], x["tx_windows"], x["tx_est_adv_events"],
+              x["tx_payload_bytes"], x["tx_dropped"], x["anchor_rx_soldier"], x["anchor_reports"],
+              x["anchor_queue_full_skip"]] for x in rep["tx_intervals"]]))
+    if rep["anchors"]:
+        lines += ["", "[앵커 관측 RSSI]"]
+        lines.append(_table(["anchor_id", "병사 노드", "source", "보고", "평균", "표준편차", "최소", "최대",
+                             "경과 중앙값ms"],
+                            [[a["anchor_id"], a["observed_node_id"], a["source"], a["reports"], a["rssi_mean"],
+                              a["rssi_sd"], a["rssi_min"], a["rssi_max"], a["age_median_ms"]]
+                             for a in rep["anchors"]]))
+    if rep["events"]:
+        lines += ["", "[사건]"]
+        lines.append(_table(["source", "event_type", "사건", "보고"],
+                            [[e["source"], e["event_type"], e["events"], e["reports"]] for e in rep["events"]]))
+    return "\n".join(lines)
+
+
+def main(argv=None):
+    import argparse
+
+    ap = argparse.ArgumentParser(description="SQUAD LINK 로그 요약(수신·누락·송신량)")
+    ap.add_argument("log", help="rx.jsonl, 그 폴더, 또는 장치 출력을 저장한 NDJSON")
+    ap.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
+    args = ap.parse_args(argv)
+    rep = summarize(read_log(args.log))
+    if args.json:
+        print(json.dumps(rep, ensure_ascii=False, indent=2))
+    else:
+        print(format_text(rep))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

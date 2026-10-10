@@ -33,6 +33,7 @@ static volatile bool s_scanning = false;
 static bool s_scanRetryPending = false;  // 시작 실패 후 기다리는 중(0에서 시작하는 시각 비교는 24.8일 뒤 뒤집힘)
 static uint32_t s_scanRetryAt = 0;
 static uint32_t s_lastReport = 0;
+static bool s_enabled = true;
 
 // now가 then보다 앞서면(다른 태스크가 더 늦은 millis()를 기록) 0으로 본다
 static uint32_t elapsedMs(uint32_t now, uint32_t then) {
@@ -133,7 +134,22 @@ static void sendOne(const SoldierObs& o, uint32_t now) {
   printAnchorObsJson(p);
 }
 
+void anchorSetEnabled(bool on) {
+  if (on == s_enabled || !s_scan) return;
+  s_enabled = on;
+  if (on) return;  // 다음 anchorLoop에서 스캔 시작
+  if (s_scanning) s_scan->stop();  // Bluedroid: stop()에는 끝 콜백이 오지 않으므로 직접 표시
+  s_scanning = false;
+  s_scanRetryPending = false;
+  portENTER_CRITICAL(&s_mux);
+  for (auto& o : s_tab) o.used = false;
+  portEXIT_CRITICAL(&s_mux);
+}
+
+bool anchorEnabled() { return s_enabled && s_scan; }
+
 void anchorLoop(uint32_t now) {
+  if (!s_enabled) return;
   if (!s_scanning && (!s_scanRetryPending || (int32_t)(now - s_scanRetryAt) >= 0)) {
     s_scan->clearResults();
     s_scanning = s_scan->start(ANCHOR_SCAN_CYCLE_S, onScanDone, false);

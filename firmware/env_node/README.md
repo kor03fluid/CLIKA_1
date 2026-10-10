@@ -88,7 +88,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 
 ```text
 # {"type":"boot","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor":true,"schema_version":"1.0"}
-# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","uptime_ms":61234,"tx":{...},"anchor":{...}}
+# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor_enabled":true,"uptime_ms":61234,"tx":{...},"anchor":{...}}
 # {"type":"warn","node_id":"env_01","boot_id":"boot_1a2b","msg":"unknown command: foo"}
 ```
 
@@ -100,6 +100,7 @@ ESP32 자체 부팅 메시지(ROM 로그)는 JSON이 아니어서 서버가 데�
 |---|---|
 | `stats` | 송신량·앵커 수신 통계(진단 줄) |
 | `mode fixed` / `mode adaptive` | 송신 정책 전환 |
+| `anchor off` / `anchor on` | 앵커 스캔·보고 끄기/켜기(스캔으로 늘어난 전류·송신량 비교용. 끄면 병사 표를 비움) |
 | `vtemp 38` / `vtemp off` | 가상 온도 주입/해제(−40~100 숫자만) |
 | `send` | 환경 패킷 즉시 1회 송신 |
 
@@ -153,6 +154,8 @@ BLE 레거시 광고 제조사 데이터(회사 ID `0xFFFF` = SIG 시험용), �
 `est_adv_events`는 창 길이/광고 간격으로 계산한 **추정치**다. 실제 광고 이벤트 수·RF 방출량으로 부르지 않는다(규격 12장).
 
 ## 남은 일
+
+실물 도착 후 시험 순서와 기록표는 [`docs/c_hw_test.md`](../../docs/c_hw_test.md).
 
 - [ ] 팀원 B와 BLE 바이트 배치·숫자 ID 변환표·회사 ID 확정 (`packet.h`, `json_out.cpp`)
 - [ ] 실물 핀·센서 전압·활성 레벨 확인

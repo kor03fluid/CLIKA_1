@@ -25,7 +25,7 @@
   td, th { border-bottom:1px solid var(--line); padding:3px 4px; text-align:left; vertical-align:top; }
   tr.stale td { opacity:.6; }
   .scroll { overflow-x:auto; }
-  button, select, input { font:inherit; }
+  button, select, input { font:inherit; max-width:100%; box-sizing:border-box; }
 </style>
 </head>
 <body>
@@ -45,6 +45,15 @@
   <button id="vstop">중지</button>
   <span id="vstatus" class="note"></span>
 </div>
+
+<h2>장치 명령</h2>
+<div class="row">
+  <select id="cport"></select>
+  <input id="ccmd" placeholder="stats · mode fixed · anchor off · vtemp 38" size="36">
+  <button id="csend">보내기</button>
+  <span id="cresult" class="note"></span>
+</div>
+<div id="dstats" class="note"></div>
 
 <h2>분대원</h2>
 <div class="scroll"><table id="soldiers"></table></div>
@@ -84,6 +93,13 @@ function renderState(s) {
     `무효 ${t.invalid} · 경고 ${t.warnings} · 가려짐 ${t.shadowed} · 입력 ` +
     ((s.inputs || []).map((i) => `${i.port}:${i.connected ? "연결" : "끊김"}`).join(", ") || "없음") +
     (s.log && (s.log.error || s.log.dropped) ? ` · 로그 쓰기 실패(버린 줄 ${s.log.dropped}): ${s.log.error}` : "");
+  renderPorts(s.inputs);
+  $("dstats").innerHTML = Object.values(s.device_stats || {}).map((d) => {
+    const tx = d.tx || {}, a = d.anchor || {};
+    return `<div>${esc(d.node_id)} stats (${esc(kst(d.received_at))}): ${esc(d.tx_mode)} · 앵커 ` +
+      `${d.anchor_enabled === false ? "끔" : "켬"} · 패킷 ${esc(tx.packets)} · 창 ${esc(tx.windows)} · ` +
+      `버림 ${esc(tx.dropped)} · 앵커 수신 ${esc(a.rx_soldier)} · 앵커 보고 ${esc(a.reports)}</div>`;
+  }).join("");
   const v = s.virtual || {};
   $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` : "중지";
 
@@ -169,6 +185,26 @@ $("vstart").onclick = () => post("/api/virtual", {
   enabled: true, scenario: $("scenario").value, loop: $("vloop").checked,
   nodes: $("vnodes").value.split(",").map((x) => x.trim()).filter(Boolean) });
 $("vstop").onclick = () => post("/api/virtual", { enabled: false });
+
+let portsKey = null;
+function renderPorts(inputs) {  // 목록이 바뀔 때만 다시 그려 선택을 유지한다
+  const ports = (inputs || []).map((i) => i.port);
+  if (ports.join("\n") === portsKey) return;
+  portsKey = ports.join("\n");
+  const cur = $("cport").value;
+  $("cport").innerHTML = ports.length
+    ? ports.map((p) => `<option ${p === cur ? "selected" : ""}>${esc(p)}</option>`).join("")
+    : '<option value="">시리얼 입력 없음</option>';
+}
+async function sendCmd() {
+  const port = $("cport").value, cmd = $("ccmd").value.trim();
+  if (!port || !cmd) return;
+  const r = await post("/api/cmd", { port, cmd });
+  $("cresult").textContent = r.sent ? `보냄: ${cmd} (${kst(new Date().toISOString())})`
+                                    : `실패: ${r.error || "포트가 닫혀 있음"}`;
+}
+$("csend").onclick = sendCmd;
+$("ccmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCmd(); });
 
 fetch("/api/scenarios").then((r) => r.json()).then((list) => {
   $("scenario").innerHTML = list.map((n) => `<option ${n === "demo" ? "selected" : ""}>${esc(n)}</option>`).join("");

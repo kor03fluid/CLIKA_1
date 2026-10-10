@@ -15,4 +15,8 @@ struct AnchorStats {
 
 void anchorBegin();
 void anchorLoop(uint32_t now);
+// 실행 중 스캔·보고 켜고 끄기(시리얼 "anchor on|off"). 스캔으로 늘어난 전류·송신량 비교 시험용.
+// 끄면 스캔을 멈추고 병사 표를 비운다. 다시 켜면 처음 본 병사처럼 보고한다.
+void anchorSetEnabled(bool on);
+bool anchorEnabled();
 const AnchorStats& anchorStats();

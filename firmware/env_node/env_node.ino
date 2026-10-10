@@ -180,12 +180,12 @@ static void printStats() {
   const TxStats& t = bleTxStats();
   const AnchorStats& a = anchorStats();
   diagBegin("stats");
-  Serial.printf(",\"tx_mode\":\"%s\",\"uptime_ms\":%lu,"
+  Serial.printf(",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"uptime_ms\":%lu,"
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
                 "\"dropped\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
                 "\"rx_simulation_skip\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu}}\n",
-                modeName(), (unsigned long)millis(), (unsigned long)t.packets,
+                modeName(), anchorEnabled() ? "true" : "false", (unsigned long)millis(), (unsigned long)t.packets,
                 (unsigned long)t.windows, (unsigned long)t.est_adv_events,
                 (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)a.rx_total,
                 (unsigned long)a.rx_soldier, (unsigned long)a.rx_relayed_skip,
@@ -204,7 +204,15 @@ static void setVirtualTempCommand(const char* arg) {
   sensorsSetVirtualTemp(v);
 }
 
-// 시리얼 명령: stats | mode fixed | mode adaptive | vtemp <°C> | vtemp off | send
+static void setAnchorCommand(bool on) {
+#if ANCHOR_ENABLE
+  anchorSetEnabled(on);
+#else
+  printWarn("anchor disabled at build (ANCHOR_ENABLE 0)", on ? String("on") : String("off"));
+#endif
+}
+
+// 시리얼 명령: stats | mode fixed | mode adaptive | anchor on | anchor off | vtemp <°C> | vtemp off | send
 static void handleSerial(uint32_t now) {
   static String line;
   while (Serial.available()) {
@@ -217,6 +225,8 @@ static void handleSerial(uint32_t now) {
     if (line == "stats") printStats();
     else if (line == "mode fixed") s_adaptive = false;
     else if (line == "mode adaptive") s_adaptive = true;
+    else if (line == "anchor on") setAnchorCommand(true);
+    else if (line == "anchor off") setAnchorCommand(false);
     else if (line == "vtemp off") sensorsSetVirtualTemp(NAN);
     else if (line.startsWith("vtemp ")) setVirtualTempCommand(line.c_str() + 6);
     else if (line == "send") sendEnv(now, false);

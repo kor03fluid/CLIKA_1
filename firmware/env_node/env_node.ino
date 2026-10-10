@@ -146,6 +146,27 @@ static void printStats() {
                 (unsigned long)a.queue_full_skip);
 }
 
+// JSON 경고 한 줄. 사용자가 친 글자를 그대로 넣으므로 따옴표·역슬래시·제어문자를 바꿔 쓴다.
+static void printWarn(const char* msg, const String& detail) {
+  String safe;
+  for (size_t i = 0; i < detail.length(); i++) {
+    char c = detail[i];
+    safe += (c == '"' || c == '\\' || (uint8_t)c < 0x20) ? '_' : c;
+  }
+  Serial.printf("{\"type\":\"warn\",\"msg\":\"%s: %s\"}\n", msg, safe.c_str());
+}
+
+// "vtemp <°C>": 숫자 전체가 올바를 때만 적용한다(오타로 0°C가 들어가지 않게).
+static void setVirtualTempCommand(const char* arg) {
+  char* end = nullptr;
+  float v = strtof(arg, &end);
+  if (end == arg || *end != '\0' || !isfinite(v) || v < -40.0f || v > 100.0f) {
+    printWarn("vtemp needs a number between -40 and 100, or off", String(arg));
+    return;
+  }
+  sensorsSetVirtualTemp(v);
+}
+
 // 시리얼 명령: stats | mode fixed | mode adaptive | vtemp <°C> | vtemp off | send
 static void handleSerial(uint32_t now) {
   static String line;
@@ -160,9 +181,9 @@ static void handleSerial(uint32_t now) {
     else if (line == "mode fixed") s_adaptive = false;
     else if (line == "mode adaptive") s_adaptive = true;
     else if (line == "vtemp off") sensorsSetVirtualTemp(NAN);
-    else if (line.startsWith("vtemp ")) sensorsSetVirtualTemp(line.substring(6).toFloat());
+    else if (line.startsWith("vtemp ")) setVirtualTempCommand(line.c_str() + 6);
     else if (line == "send") sendEnv(now, "manual", false);
-    else if (line.length()) Serial.printf("{\"type\":\"warn\",\"msg\":\"unknown command: %s\"}\n", line.c_str());
+    else if (line.length()) printWarn("unknown command", line);
     line = "";
   }
 }

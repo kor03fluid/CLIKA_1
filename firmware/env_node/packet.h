@@ -73,7 +73,7 @@ struct __attribute__((packed)) AnchorEntry {
   int8_t   rssi_last;  // dBm
   int8_t   rssi_avg;   // dBm, EMA
   uint8_t  samples;    // 직전 보고 이후 수신 횟수(255 포화)
-  uint8_t  age_ds;     // 마지막 수신 후 경과, 0.1초 단위(255 = 25.5초 이상)
+  uint16_t age_ds;     // 마지막 수신 후 경과, 0.1초 단위(최대 6553.5초). ANCHOR_STALE_MS보다 길어야 함
 };
 
 #define ANCHOR_ENTRIES_PER_PKT 2
@@ -86,4 +86,4 @@ struct __attribute__((packed)) PktAnchorReport {
 
 static_assert(sizeof(PktHeader) == 7, "header size");
 static_assert(sizeof(PktEnv) <= PKT_MAX_PAYLOAD, "env packet too large");
-static_assert(sizeof(PktAnchorReport) <= PKT_MAX_PAYLOAD, "anchor packet too large");
+static_assert(sizeof(PktAnchorReport) <= PKT_MAX_PAYLOAD, "anchor packet too large");  // 7+1+8×2 = 24B

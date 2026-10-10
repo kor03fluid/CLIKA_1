@@ -20,12 +20,15 @@ struct SoldierObs {
   int8_t   reported_avg;
 };
 
+static_assert(ANCHOR_STALE_MS / 100 < 0xFFFF, "age_ds(0.1초, 16bit)가 ANCHOR_STALE_MS를 담지 못함");
+
 static SoldierObs s_tab[ANCHOR_MAX_SOLDIERS];
 static AnchorStats s_stats = {};
 // 스캔 콜백은 BLE 태스크에서 돌기 때문에 표 접근을 잠근다.
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static BLEScan* s_scan = nullptr;
 static volatile bool s_scanning = false;
+static uint32_t s_scanRetryAt = 0;
 static uint32_t s_lastReport = 0;
 static uint32_t s_holdUntil = 0;  // 큐가 가득 차 미룬 보고의 재시도 시각
 
@@ -109,7 +112,7 @@ static void printReportJson(const PktAnchorReport& p) {
     const AnchorEntry& e = p.e[i];
     Serial.printf("%s{\"soldier\":%u,\"last_seq\":%u,\"rssi\":%d,\"rssi_avg\":%d,\"n\":%u,\"age_ms\":%u}",
                   i ? "," : "", e.soldier_id, e.last_seq, e.rssi_last, e.rssi_avg, e.samples,
-                  e.age_ds * 100u);
+                  (unsigned)e.age_ds * 100u);
   }
   Serial.printf("],\"ms\":%lu}\n", (unsigned long)millis());
 }
@@ -147,7 +150,7 @@ static bool sendReports(const SoldierObs* snap, uint8_t n, uint32_t now) {
       e.rssi_last = o.rssi_last;
       e.rssi_avg = (int8_t)lroundf(o.rssi_avg);
       e.samples = o.samples;
-      e.age_ds = ageDs > 255 ? 255 : ageDs;
+      e.age_ds = ageDs > 0xFFFF ? 0xFFFF : ageDs;
       p.count++;
     }
     bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), 1);  // 자리는 위에서 확인
@@ -159,9 +162,10 @@ static bool sendReports(const SoldierObs* snap, uint8_t n, uint32_t now) {
 }
 
 void anchorLoop(uint32_t now) {
-  if (!s_scanning) {
+  if (!s_scanning && (int32_t)(now - s_scanRetryAt) >= 0) {
     s_scan->clearResults();
     s_scanning = s_scan->start(ANCHOR_SCAN_CYCLE_S, onScanDone, false);
+    if (!s_scanning) s_scanRetryAt = now + ANCHOR_SCAN_RETRY_MS;
   }
 
   if (now - s_lastReport < ANCHOR_MIN_REPORT_MS || (int32_t)(now - s_holdUntil) < 0) return;

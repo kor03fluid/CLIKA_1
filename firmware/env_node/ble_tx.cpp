@@ -10,6 +10,9 @@ struct TxItem {
   uint8_t windowsLeft;
 };
 
+// 레거시 광고 31B = Flags(3B) + 제조사 데이터 머리(4B) + 페이로드. 넘으면 BLE 라이브러리가 조용히 버린다.
+static_assert(3 + 4 + PKT_MAX_PAYLOAD <= 31, "advertising payload exceeds 31 bytes");
+
 static TxItem s_q[TX_QUEUE_LEN];
 static uint8_t s_head = 0;
 static uint8_t s_count = 0;

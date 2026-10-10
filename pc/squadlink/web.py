@@ -8,9 +8,14 @@ POST /api/events/<id>/resolve  실제 해결
 POST /api/virtual              가상 노드 시작/중지 body: {"enabled", "scenario", "nodes", "speed", "loop", "loss_rate"}
 POST /api/cmd                  장치로 명령     body: {"port": "...", "cmd": "stats"}
 GET  /                         디버그 화면(관제 UI 아님)
+
+읽기(GET)는 어느 출처에서나 허용한다. 쓰기(POST)는 같은 출처, Origin 헤더가 없는 클라이언트(curl 등),
+--allow-origin으로 지정한 출처만 받고, Content-Type은 application/json이어야 한다. 그래서 같은 Wi-Fi의
+브라우저에서 열린 다른 웹페이지가 SOS 해결 처리나 장치 명령을 몰래 보낼 수 없다.
 """
 
 import json
+import math
 import os
 import queue
 import threading
@@ -22,12 +27,14 @@ from .virtual import SCENARIOS, VirtualRunner
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 STATE_MIN_GAP_S = 0.25
+MAX_BODY_BYTES = 64 * 1024
 
 
 class App:
-    def __init__(self, hub, clock=time.time):
+    def __init__(self, hub, clock=time.time, allow_origins=()):
         self.hub = hub
         self.clock = clock
+        self.allow_origins = {o.rstrip("/") for o in allow_origins}  # 쓰기를 허용할 다른 출처
         self.readers = {}  # port -> SerialReader
         self.replayer = None
         self.virtual = None
@@ -66,14 +73,16 @@ class App:
             if not isinstance(nodes, list):
                 raise ValueError("nodes must be a list")
             try:
-                nodes = [int(n, 0) if isinstance(n, str) else int(n) for n in nodes]
-            except (TypeError, ValueError):
+                nodes = [int(n.strip(), 0) if isinstance(n, str) else int(n) for n in nodes]
+            except (TypeError, ValueError, OverflowError):
                 raise ValueError("nodes must be integers (e.g. 2 or \"0x31\")")
         try:
             speed = float(cfg.get("speed", 1.0))
             loss_rate = float(cfg.get("loss_rate", 0.0))
         except (TypeError, ValueError):
             raise ValueError("speed and loss_rate must be numbers")
+        if not (math.isfinite(speed) and math.isfinite(loss_rate)):
+            raise ValueError("speed and loss_rate must be finite")
         return VirtualRunner(
             self.hub, clock=self.clock, speed=speed, scenario=cfg.get("scenario", "normal"),
             nodes=nodes, seed=cfg.get("seed"), loop=bool(cfg.get("loop", False)),
@@ -92,10 +101,23 @@ def make_handler(app):
         def log_message(self, fmt, *args):  # 접속 로그는 끈다
             pass
 
+        def _origin_ok(self):
+            """쓰기 요청을 받아도 되는 출처인가. Origin이 없으면(브라우저 아님) 허용."""
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            origin = origin.rstrip("/")
+            host = self.headers.get("Host", "")
+            return origin in ("http://" + host, "https://" + host) or origin in app.allow_origins
+
         def _cors(self):
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            if self.command == "GET":
+                self.send_header("Access-Control-Allow-Origin", "*")
+                return
+            origin = (self.headers.get("Origin") or "").rstrip("/")
+            if origin and origin in app.allow_origins:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Vary", "Origin")
 
         def _json(self, obj, status=200):
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -108,21 +130,59 @@ def make_handler(app):
             self.wfile.write(body)
 
         def _body(self):
-            n = int(self.headers.get("Content-Length") or 0)
+            """JSON 객체 본문. 형식이 틀리면 (None, 상태 코드, 메시지)."""
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                return None, 415, "Content-Type must be application/json"
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return None, 400, "bad Content-Length"
+            if n > MAX_BODY_BYTES:
+                return None, 413, "body too large"
             if n <= 0:
-                return {}
+                return {}, 200, None
             try:
                 obj = json.loads(self.rfile.read(n).decode("utf-8"))
             except ValueError:
-                return None
-            return obj if isinstance(obj, dict) else None
+                return None, 400, "invalid json"
+            if not isinstance(obj, dict):
+                return None, 400, "body must be a JSON object"
+            return obj, 200, None
 
         def do_OPTIONS(self):
+            method = (self.headers.get("Access-Control-Request-Method") or "").upper()
+            origin = (self.headers.get("Origin") or "").rstrip("/")
             self.send_response(204)
-            self._cors()
-            self.end_headers()
+            if method == "GET":
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Access-Control-Allow-Methods", "GET")
+            elif origin and origin in app.allow_origins:
+                self.send_header("Access-Control-Allow-Origin", origin)
+                self.send_header("Access-Control-Allow-Methods", "GET, POST")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Vary", "Origin")
+            self.end_headers()  # 허용하지 않는 출처에는 CORS 헤더를 주지 않아 브라우저가 막는다
+
+        def _guard(self, fn):
+            """처리 중 예상 못 한 예외가 나도 연결을 끊지 않고 500을 돌려준다."""
+            try:
+                fn()
+            except OSError:  # 클라이언트가 먼저 끊음
+                pass
+            except Exception as e:
+                try:
+                    self._json({"error": f"internal error: {type(e).__name__}"}, 500)
+                except OSError:
+                    pass
 
         def do_GET(self):
+            self._guard(self._get)
+
+        def do_POST(self):
+            self._guard(self._post)
+
+        def _get(self):
             url = urlparse(self.path)
             if url.path == "/api/state":
                 return self._json(app.state())
@@ -142,11 +202,13 @@ def make_handler(app):
                 return self._static("index.html", "text/html; charset=utf-8")
             self._json({"error": "not found"}, 404)
 
-        def do_POST(self):
+        def _post(self):
             url = urlparse(self.path)
-            body = self._body()
+            if not self._origin_ok():
+                return self._json({"error": "origin not allowed"}, 403)
+            body, status, msg = self._body()
             if body is None:
-                return self._json({"error": "invalid json"}, 400)
+                return self._json({"error": msg}, status)
             parts = url.path.strip("/").split("/")
             if len(parts) == 4 and parts[:2] == ["api", "events"] and parts[3] in ("ack", "resolve"):
                 try:

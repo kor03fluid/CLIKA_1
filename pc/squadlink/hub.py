@@ -15,10 +15,10 @@ SEQ_WINDOW = 512        # 중복 판단에 기억하는 최근 seq 수
 SEQ_RESYNC_GAP = 1000   # 이보다 크게 뛰면 누락으로 세지 않고 다시 맞춘다
 
 # 통신 두절: 노드 종류별 최대 송신 간격 × 연속 누락 수 + 여유. 5초로 고정하지 않는다.
-MAX_INTERVAL_S = {"soldier": 30.0, "env": 30.0, "anchor": 15.0}
-# 이전 boot 번호의 패킷을 "늦게 온 패킷"으로 보는 시간. 이보다 오래 조용했던 boot 번호가 다시 오면
-# 플래시 초기화·카운터 순환으로 번호가 재사용된 것으로 보고 새 부팅으로 처리한다.
-STALE_BOOT_WINDOW_S = 30.0
+# 앵커 전용 노드는 볼 병사가 없으면 보고를 보내지 않으므로 두절을 판정하지 않는다.
+MAX_INTERVAL_S = {"soldier": 30.0, "env": 30.0}
+# 두절 판정이 없는 노드(앵커 전용)의 "최근 활동" 기준. 이전 boot 판정과 출처 우선순위에 쓴다.
+ACTIVE_FALLBACK_S = 65.0
 MAX_BOOTS_KEPT = 8
 FIXED_INTERVAL_S = 5.0  # tx_mode == "fixed" 일 때
 MISS_COUNT = 2
@@ -42,7 +42,7 @@ class SeqTracker:
         self.missing_total = 0
 
     def add(self, seq):
-        """새 seq면 True, 중복이면 False."""
+        """중복이면 False, 지금까지 중 가장 앞선 seq면 "new", 그보다 뒤처진 seq면 "late"."""
         if seq in self.seen:
             return False
         self.seen.add(seq)
@@ -52,7 +52,7 @@ class SeqTracker:
 
         if self.max_seq is None:
             self.max_seq = seq
-            return True
+            return "new"
         diff = (seq - self.max_seq) % SEQ_MOD
         if 0 < diff < SEQ_MOD // 2:  # 앞선 seq
             if diff <= SEQ_RESYNC_GAP:
@@ -62,9 +62,10 @@ class SeqTracker:
                 while len(self.missing) > SEQ_WINDOW:
                     self.missing.popitem(last=False)
             self.max_seq = seq
-        elif self.missing.pop(seq, None):  # 늦게 도착: 누락에서 뺀다
+            return "new"
+        if self.missing.pop(seq, None):  # 늦게 도착: 누락에서 뺀다
             self.missing_total -= 1
-        return True
+        return "late"
 
 
 class NodeState:
@@ -86,6 +87,23 @@ class NodeState:
         self.relayed = 0
         self.reboots = 0
         self.stale_boot = 0
+        self.late = 0
+        self.shadowed = 0
+        # SOS 구간 기록(현재 boot). 늦게 온 sos 패킷이 이미 알린 구간에 속하는지 판단한다.
+        # seq 16bit 순환은 고려하지 않는다(10초 주기로 약 7일).
+        self.sos_starts = deque(maxlen=32)
+        self.sos_releases = deque(maxlen=32)
+
+    def reset_stream(self):
+        """출처가 바뀔 때 boot·seq 기록과 최신 패킷을 비운다. 누적 카운터는 남긴다."""
+        self.boot = None
+        self.trackers.clear()
+        self.boot_last_rx.clear()
+        self.latest.clear()
+        self.last_seq = None
+        self.via = None
+        self.sos_starts.clear()
+        self.sos_releases.clear()
 
     @property
     def kind(self):
@@ -95,10 +113,20 @@ class NodeState:
         return "anchor" if "anchor" in self.types else "unknown"
 
     def timeout_s(self):
+        """통신 두절 판정 시간(초). 앵커 전용 노드는 판정하지 않으므로 None."""
+        if self.kind == "anchor":
+            return None
         interval = MAX_INTERVAL_S.get(self.kind, 30.0)
         if any(p.get("tx_mode") == "fixed" for p in self.latest.values()):
             interval = FIXED_INTERVAL_S
         return interval * MISS_COUNT + GRACE_S
+
+    def window_s(self):
+        """이 노드가 '최근 활동 중'이라고 보는 시간. 두절 판정 시간과 같다."""
+        return self.timeout_s() or ACTIVE_FALLBACK_S
+
+    def active(self, now):
+        return self.last_rx is not None and now - self.last_rx <= self.window_s()
 
     def missing_total(self):
         return sum(t.missing_total for t in self.trackers.values())
@@ -120,6 +148,7 @@ class NodeState:
             "counters": {
                 "rx": self.rx, "dup": self.dup, "missing": self.missing_total(),
                 "relayed": self.relayed, "reboots": self.reboots, "stale_boot": self.stale_boot,
+                "late": self.late, "shadowed": self.shadowed,
             },
         }
 
@@ -147,7 +176,8 @@ class Hub:
         self.events = deque(maxlen=max_events)
         self.events_by_id = {}
         self._ids = itertools.count(1)
-        self.totals = {"lines": 0, "packets": 0, "dup": 0, "invalid": 0, "meta": 0, "error": 0}
+        self.totals = {"lines": 0, "packets": 0, "dup": 0, "invalid": 0, "meta": 0, "error": 0,
+                       "late": 0, "shadowed": 0}
         self.listeners = []
         self.version = 0  # 상태가 바뀔 때마다 증가
 
@@ -177,7 +207,7 @@ class Hub:
         """JSON 객체 하나를 처리하고 결과 문자열을 돌려준다.
 
         source: "real" | "virtual" | "replay"
-        결과: ok | dup | stale_boot | meta | invalid | error
+        결과: ok | late | dup | stale_boot | shadowed | meta | invalid | error
         예외를 밖으로 내보내지 않는다. 형식이 이상한 줄 하나가 입력 스레드를 멈추면 안 된다.
         """
         with self.lock:
@@ -192,7 +222,7 @@ class Hub:
                 self.totals["invalid"] += 1
             if self.logger:
                 self.logger.rx(now, source, port, result, obj, error)
-            if result in ("ok", "meta", "error"):
+            if result in ("ok", "late", "meta", "error"):
                 self._changed()
             return result
 
@@ -215,13 +245,25 @@ class Hub:
         if n is None:
             n = self.nodes[node_id] = NodeState(node_id)
 
+        # 출처 우선순위: 실측 > (먼저 들어와 활동 중인) 가상·재생.
+        # 같은 ID를 두 출처가 동시에 보내면 boot가 서로 달라 상태가 번갈아 바뀌므로 한쪽만 받는다.
+        switched = False
+        if n.source is not None and source != n.source:
+            if source != "real" and n.active(now):
+                n.shadowed += 1
+                self.totals["shadowed"] += 1
+                return "shadowed"
+            self._event(now, node_id, "source_change", "info", {"from": n.source, "to": source},
+                        source, obj)
+            n.reset_stream()
+            switched = True
+
         if boot != n.boot:
             last = n.boot_last_rx.get(boot)
-            current_alive = n.last_rx is not None and now - n.last_rx <= STALE_BOOT_WINDOW_S
-            if last is not None and (now - last <= STALE_BOOT_WINDOW_S or current_alive):
+            if last is not None and (now - last <= n.window_s() or n.active(now)):
                 # 이전 부팅의 늦은 패킷: 중복만 거르고 현재 상태는 바꾸지 않는다.
-                # 수신 시각을 갱신하지 않으므로, 번호가 재사용된 경우에도 현재 boot가
-                # STALE_BOOT_WINDOW_S 동안 조용해지면 새 부팅으로 받아들인다.
+                # 수신 시각을 갱신하지 않으므로, 번호가 재사용된 경우(플래시 초기화·카운터 순환)에도
+                # 현재 boot가 두절 판정 시간만큼 조용해지면 새 부팅으로 받아들인다.
                 if not n.trackers[boot].add(seq):
                     n.dup += 1
                     self.totals["dup"] += 1
@@ -236,12 +278,15 @@ class Hub:
             n.trackers.pop(boot, None)  # 재사용된 번호면 이전 seq 기록을 버린다
             n.boot_last_rx.pop(boot, None)
             n.trackers[boot] = SeqTracker()
+            n.sos_starts.clear()
+            n.sos_releases.clear()
             while len(n.trackers) > MAX_BOOTS_KEPT:
                 old = next(iter(n.trackers))
                 n.trackers.pop(old)
                 n.boot_last_rx.pop(old, None)
 
-        if not n.trackers[boot].add(seq):
+        order = n.trackers[boot].add(seq)
+        if not order:
             n.dup += 1
             self.totals["dup"] += 1
             return "dup"
@@ -250,21 +295,33 @@ class Hub:
         n.boot_last_rx[boot] = now
         n.rx += 1
         n.types.add(ptype)
-        n.last_seq = seq
         n.last_rx = now
         n.source = source
-        n.virtual = bool(obj.get("virtual")) or source == "virtual"
         relayed = obj.get("via") == "relay" or bool(obj.get("relayed"))
-        n.via = "relay" if relayed else "direct"
         if relayed:
             n.relayed += 1
         if not n.online:
-            if n.rx > 1:
+            if n.rx > 1 and not switched:
                 self._event(now, node_id, "comm_restored", "info", {}, source, obj)
             n.online = True
 
-        prev = n.latest.get(ptype)
         packet = dict(obj, rx_ts=now, source=source, port=port)
+        if order == "late":
+            # 더 새 패킷을 이미 받았다: 최신 상태는 덮지 않고 한 번만 일어나는 사건만 반영한다.
+            n.late += 1
+            self.totals["late"] += 1
+            if ptype == "soldier":
+                self._late_soldier_sos(now, n, packet, source)
+            elif ptype == "env":
+                self._env_events(now, n, packet, source)
+            elif ptype == "anchor":
+                self._anchor_obs(now, node_id, packet)  # 관측 시각으로 최신 여부를 따로 판단
+            return "late"
+
+        n.last_seq = seq
+        n.virtual = bool(obj.get("virtual")) or source == "virtual"
+        n.via = "relay" if relayed else "direct"
+        prev = n.latest.get(ptype)
         n.latest[ptype] = packet
 
         if ptype == "soldier":
@@ -278,7 +335,10 @@ class Hub:
     def _soldier_events(self, now, n, prev, p, source):
         prev = prev or {}
         if p.get("sos") and not prev.get("sos"):
+            n.sos_starts.append(p["seq"])
             self._event(now, n.node, "sos", "critical", {"seq": p.get("seq")}, source, p)
+        elif prev.get("sos") and not p.get("sos"):
+            n.sos_releases.append(p["seq"])
         alert = str(p.get("alert") or "none")
         if alert != "none" and alert != str(prev.get("alert") or "none"):
             level = "critical" if alert == "priority" else "warning"
@@ -291,6 +351,21 @@ class Hub:
         if isinstance(gps, dict) and isinstance(prev_gps, dict):
             if prev_gps.get("valid") and not gps.get("valid"):
                 self._event(now, n.node, "gps_lost", "info", {}, source, p)
+
+    def _late_soldier_sos(self, now, n, p, source):
+        """늦게 온 sos 패킷이 아직 알리지 않은 SOS 구간이면 이벤트를 만든다.
+
+        직전 해제(seq < 이 패킷) 이후 시작된 SOS 이벤트가 이미 있으면 같은 구간이라 알리지 않는다.
+        """
+        if not p.get("sos"):
+            return
+        seq = p["seq"]
+        prior = [r for r in n.sos_releases if r < seq]
+        since = max(prior) if prior else None
+        if any(st <= seq and (since is None or st > since) for st in n.sos_starts):
+            return
+        n.sos_starts.append(seq)
+        self._event(now, n.node, "sos", "critical", {"seq": seq, "late": True}, source, p)
 
     def _env_events(self, now, n, p, source):
         events = p.get("events")
@@ -367,11 +442,14 @@ class Hub:
         with self.lock:
             changed = False
             for n in self.nodes.values():
-                if n.online and n.last_rx is not None and now - n.last_rx > n.timeout_s():
+                timeout = n.timeout_s()
+                if timeout is None:  # 앵커 전용: 판정하지 않음
+                    continue
+                if n.online and n.last_rx is not None and now - n.last_rx > timeout:
                     n.online = False
                     changed = True
                     self._event(now, n.node, "comm_lost", "warning",
-                                {"last_rx": n.last_rx, "timeout_s": n.timeout_s()},
+                                {"last_rx": n.last_rx, "timeout_s": timeout},
                                 n.source, {"virtual": n.virtual, "boot": n.boot, "seq": n.last_seq})
             if changed:
                 self._changed()

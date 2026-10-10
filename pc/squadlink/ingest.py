@@ -4,6 +4,7 @@
 """
 
 import json
+import math
 import sys
 import threading
 import time
@@ -124,7 +125,9 @@ def iter_log_records(path):
             if obj is None:
                 continue
             if "rx_ts" in obj and "result" in obj:  # 서버 로그 형식
-                if obj["result"] in ("ok", "meta", "dup", "stale_boot") and isinstance(obj.get("obj"), dict):
+                # 받아들였던 줄(+중복·이전 부팅 패킷)만 다시 흘린다. 다른 출처에 가려졌던 줄(shadowed)은 뺀다.
+                if (obj["result"] in ("ok", "late", "meta", "dup", "stale_boot")
+                        and isinstance(obj.get("obj"), dict)):
                     ts = obj["rx_ts"]
                     ok_ts = isinstance(ts, (int, float)) and not isinstance(ts, bool)
                     yield (ts if ok_ts else None), obj["obj"]
@@ -136,8 +139,8 @@ class Replayer(threading.Thread):
     """기록 로그를 다시 흘려보낸다. source="replay"로 표시되어 실시간 데이터와 구분된다."""
 
     def __init__(self, path, hub, speed=1.0, gap_s=1.0, clock=time.time):
-        if not speed > 0:
-            raise ValueError("replay speed must be > 0")
+        if not (speed > 0 and math.isfinite(speed)):
+            raise ValueError("replay speed must be a finite number > 0")
         super().__init__(daemon=True, name="replay")
         self.path = path
         self.hub = hub

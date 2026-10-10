@@ -14,7 +14,7 @@
 관제 UI·구역 추정·우선순위 판단은 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
 `/`의 디버그 화면은 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 35개 통과(펌웨어 출력 형식과의 일치 검사 포함). 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
+**검증 상태**: 단위 테스트 44개 통과(펌웨어 출력 형식과의 일치 검사 포함). 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
 디버그 화면(데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
 ## 실행
@@ -38,9 +38,19 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 
 패킷은 `type`, `node`, `boot`, `seq`가 필수다. 중복 제거 키는 `node + boot + seq`.
 `boot`가 바뀌면 재부팅으로 기록하고, 이전 `boot`의 늦은 패킷은 상태를 바꾸지 않는다(`stale_boot`).
-단, 현재 `boot`가 30초 넘게 조용한 상태에서 예전 번호가 다시 오면(플래시 초기화·카운터 순환으로 번호 재사용)
-새 부팅으로 받아들인다(`STALE_BOOT_WINDOW_S`).
+단, 현재 `boot`가 통신 두절 판정 시간(병사·환경 65초) 넘게 조용한 상태에서 예전 번호가 다시 오면
+(플래시 초기화·카운터 순환으로 번호 재사용) 새 부팅으로 받아들인다.
 seq 간격으로 누락 수를 센다(16bit 순환, 늦게 온 패킷은 누락에서 뺌).
+
+**늦게 온 패킷**(같은 boot에서 이미 더 큰 seq를 받은 뒤 도착, 예: 중계 경로가 직접 경로보다 늦음)은
+`late`로 세고 최신 상태(`latest`·`last_seq`·`via`)를 덮지 않는다. 한 번만 일어나는 사건은 반영한다:
+환경 노드 이벤트, 앵커 관측(관측 시각으로 최신 여부 판단), 그리고 아직 알리지 않은 SOS 구간
+(직전 해제 이후 시작된 SOS 이벤트가 없을 때만 `sos` 이벤트, `detail.late=true`).
+
+**출처 우선순위**: 같은 노드 ID를 여러 출처가 보내면 실측(`real`)이 우선이다. 활동 중인 출처가 있으면
+다른 가상·재생 패킷은 `shadowed`로 버린다. 기존 출처가 두절 판정 시간만큼 조용하면 다른 출처가 이어받고,
+실측은 언제든 바로 이어받는다. 출처가 바뀌면 `source_change` 이벤트를 남기고 boot·seq 기록을 새로 시작한다
+(재부팅으로 세지 않음).
 
 | type | 보내는 쪽 | 형식 |
 |---|---|---|
@@ -81,9 +91,15 @@ JSON이 아닌 줄(ESP32 부팅 메시지 등)과 `NaN`·`Infinity`가 든 줄�
 | `POST /api/events/<id>/resolve` | 실제 해결. 확인과 따로 기록 |
 | `POST /api/virtual` | `{"enabled":true,"scenario":"demo","nodes":[2],"speed":1,"loop":false,"loss_rate":0}` / `{"enabled":false}` |
 | `POST /api/cmd` | 장치에 명령 한 줄. `{"port":"COM5","cmd":"mode fixed"}` |
+
+쓰기 요청(POST)은 `Content-Type: application/json`이어야 한다(아니면 415). 브라우저에서 오는 쓰기는
+같은 출처(이 서버가 준 화면)와 `--allow-origin`으로 지정한 출처만 받는다(아니면 403). Origin 헤더가 없는
+클라이언트(curl, 스크립트)는 받는다. 같은 Wi-Fi의 브라우저에 열린 다른 웹페이지가 SOS 해결 처리나
+장치 명령을 몰래 보내지 못하게 하려는 것이다. 같은 네트워크의 기기가 직접 요청하는 것까지 막지는 않는다.
 | `GET /api/scenarios` | 가상 시나리오 이름 |
 
-CORS를 허용하므로 관제 UI를 다른 개발 서버에서 띄워도 된다.
+읽기(GET)는 모든 출처에 CORS를 허용한다. 관제 UI를 다른 개발 서버에서 띄워 확인·해결 버튼까지 쓰려면
+`python server.py --allow-origin http://localhost:5173`처럼 그 주소를 지정한다.
 
 `/api/state` 구조:
 
@@ -91,17 +107,19 @@ CORS를 허용하므로 관제 UI를 다른 개발 서버에서 띄워도 된다
 nodes.<id>        kind(soldier|env|anchor) · boot · last_seq · last_rx · age_s · online · timeout_s
                   source(real|virtual|replay) · virtual · via(direct|relay)
                   latest.<type>  마지막 패킷 원문 + rx_ts·source·port
-                  counters       rx · dup · missing · relayed · reboots · stale_boot
+                  counters       rx · dup · missing · late · relayed · reboots · stale_boot · shadowed
 anchors.<앵커>.<병사>  rssi · rssi_avg · n · last_seq · seen_ts(수신 시각 추정) · age_s · virtual
 device_stats.<id>  장치가 보낸 마지막 stats (송신량 비교용)
-totals             lines · packets · dup · invalid · meta · error
+totals             lines · packets · dup · late · shadowed · invalid · meta · error
 virtual · inputs · replay
 ```
 
 - 앵커 관측의 `seen_ts`는 서버 수신 시각에서 `age_ms`를 뺀 값이다. 오래된 관측으로 최신 값을 덮지 않는다.
   구역 추정(같은 시간대 비교·평활·전환 지연)은 관제 쪽에서 한다.
 - 통신 두절: `최대 송신 간격 × 2 + 5초` 동안 못 받으면 `online=false`. 기본 최대 간격은 병사·환경 30초,
-  앵커 15초, `tx_mode:"fixed"`면 5초. `squadlink/hub.py` 맨 위에서 조정한다.
+  `tx_mode:"fixed"`면 5초. `squadlink/hub.py` 맨 위에서 조정한다.
+- 앵커 전용 노드(게이트웨이 앵커 등)는 볼 병사가 없으면 보고를 보내지 않으므로 두절을 판정하지 않는다
+  (`timeout_s: null`). 게이트웨이 자체의 생존은 게이트웨이가 보내는 `stats` 등 메타 줄로 확인한다.
 
 ## 이벤트
 
@@ -115,6 +133,7 @@ virtual · inputs · replay
 | `env:sound`, `env:shock`, `env:reed` | info | 환경 노드 이벤트 |
 | `comm_lost`, `comm_restored` | warning / info | 통신 두절 판정·복구 |
 | `reboot` | info | `boot` 변경 |
+| `source_change` | info | 같은 ID의 출처가 실측·가상·재생 사이에서 바뀜 |
 
 등급은 서버 기본 분류다. 최종 우선순위는 관제 쪽 판단 로직이 정한다. 모든 이벤트에 `source`·`virtual` 라벨,
 `acked_at`(확인)·`resolved_at`(해결)이 따로 있다.
@@ -135,13 +154,15 @@ virtual · inputs · replay
 
 시연 중 실물 노드 하나가 안 보이면 디버그 화면이나 API로 그 노드만 가상으로 켠다:
 `POST /api/virtual {"scenario":"normal","nodes":[2]}`. 화면과 로그에 가상 라벨이 붙으므로 말로도 밝힌다.
-실물과 같은 ID를 가상으로 켜면 boot가 달라 재부팅 이벤트가 한 번 생긴다.
+실물이 아직 보내고 있으면 같은 ID의 가상 패킷은 `shadowed`로 버려진다. 실물이 두절 판정 시간만큼 조용해진 뒤에
+가상이 이어받고(`source_change`), 실물이 돌아오면 바로 실물로 바뀐다.
 
 ## 로그
 
 `logs/<시작 시각>/`
 
-- `rx.jsonl`: 모든 입력 줄. `rx_ts`, `source`, `port`, `result`(ok·dup·stale_boot·meta·invalid·error·text), `obj`, `error`
+- `rx.jsonl`: 모든 입력 줄. `rx_ts`, `source`, `port`,
+  `result`(ok·late·dup·stale_boot·shadowed·meta·invalid·error·text), `obj`, `error`
 - `events.jsonl`: 이벤트(`rec:"event"`)와 확인·해결 기록(`rec:"ack"`, `rec:"resolve"`)
 - `session.json`: 실행 옵션
 

@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -22,7 +24,8 @@ class BrokenSerial:
 class SerialReaderTest(unittest.TestCase):
     def test_line_error_does_not_escape(self):
         r = SerialReader("p", 115200, RaisingHub())
-        r._on_line('{"type":"env","node":49,"boot":1,"seq":1}')  # 예외가 나면 실패
+        with contextlib.redirect_stderr(io.StringIO()):
+            r._on_line('{"type":"env","node":49,"boot":1,"seq":1}')  # 예외가 나면 실패
         self.assertEqual(r.lines, 1)
 
     def test_write_line_failures_return_false(self):
@@ -40,7 +43,8 @@ class ReplayerTest(unittest.TestCase):
 
     def test_missing_file_finishes_with_error(self):
         r = Replayer(os.path.join(tempfile.gettempdir(), "no-such-squadlink.jsonl"), Hub())
-        r.run()
+        with contextlib.redirect_stderr(io.StringIO()):
+            r.run()
         self.assertTrue(r.done)
         self.assertIn("FileNotFoundError", r.error)
 

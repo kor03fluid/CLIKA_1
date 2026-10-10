@@ -66,6 +66,7 @@
 #define ANCHOR_SCAN_INTERVAL_MS 100
 #define ANCHOR_SCAN_WINDOW_MS   100  // 패시브 스캔(스캔 요청 송신 없음). USB 전원이라 100% 듀티
 #define ANCHOR_SCAN_CYCLE_S     10   // 스캔 결과 버퍼 정리 주기
+#define ANCHOR_SCAN_RETRY_MS    1000 // 스캔 시작이 실패하면 이만큼 기다렸다 다시 시도
 #define ANCHOR_MAX_SOLDIERS     8
 #define ANCHOR_RSSI_ALPHA       0.3f  // EMA 평활 계수
 #define ANCHOR_RSSI_DELTA_DB    6     // 보고된 값 대비 이만큼 바뀌면 즉시 보고

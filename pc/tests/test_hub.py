@@ -69,11 +69,16 @@ class HubTest(unittest.TestCase):
         # 현재 boot(3)가 막 수신된 동안에는 늦은 패킷으로 본다
         self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 2}, "real", "p", 10.0),
                          "stale_boot")
-        # 현재 boot가 창(30초) 넘게 조용하면 새 부팅으로 받아들인다
-        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 1}, "real", "p", 40.0), "ok")
+        # 현재 boot가 두절 판정 시간(환경 노드 65초) 넘게 조용하면 새 부팅으로 받아들인다
+        window = h.nodes[49].window_s()
+        self.assertEqual(window, 65.0)
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 3}, "real", "p", 2 + window - 1),
+                         "stale_boot")
+        t = 2 + window + 1
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 1}, "real", "p", t), "ok")
         self.assertEqual(h.nodes[49].boot, 1)
-        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 2}, "real", "p", 41.0), "ok")
-        self.assertEqual(h.nodes[49].last_rx, 41.0)
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 2}, "real", "p", t + 1), "ok")
+        self.assertEqual(h.nodes[49].last_rx, t + 1)
         self.assertEqual(kinds(h).count("reboot"), 3)
 
     def test_malformed_fields_do_not_raise(self):
@@ -116,6 +121,70 @@ class HubTest(unittest.TestCase):
         self.assertEqual(h.list_events(limit=0), [])
         self.assertEqual(h.list_events(limit=-5), [])
         self.assertEqual([e["seq"] for e in h.list_events(limit=1)], [5])
+
+    def test_late_packet_does_not_overwrite_state_or_repeat_sos(self):
+        h = Hub()
+        h.ingest(soldier(seq=18, sos=True), "real", "p", 0)
+        h.ingest(soldier(seq=20, sos=False), "real", "p", 2)
+        self.assertEqual(h.ingest(soldier(seq=19, sos=True, via="relay"), "real", "p", 3), "late")
+        self.assertEqual(kinds(h), ["sos"])
+        n = h.nodes[1]
+        self.assertEqual(n.last_seq, 20)
+        self.assertFalse(n.latest["soldier"]["sos"])
+        self.assertEqual(n.via, "direct")
+        self.assertEqual((n.late, n.relayed, n.last_rx), (1, 1, 3))
+
+    def test_late_packet_reports_sos_that_was_never_seen(self):
+        h = Hub()
+        h.ingest(soldier(seq=18, sos=False), "real", "p", 0)
+        h.ingest(soldier(seq=20, sos=False), "real", "p", 2)
+        h.ingest(soldier(seq=19, sos=True), "real", "p", 3)  # 직접 경로의 19는 유실
+        evs = h.list_events()
+        self.assertEqual([e["kind"] for e in evs], ["sos"])
+        self.assertTrue(evs[0]["detail"]["late"])
+
+    def test_late_sos_after_release_is_a_new_press(self):
+        h = Hub()
+        h.ingest(soldier(seq=10, sos=True), "real", "p", 0)
+        h.ingest(soldier(seq=12, sos=False), "real", "p", 1)  # 해제
+        h.ingest(soldier(seq=20, sos=False), "real", "p", 2)
+        h.ingest(soldier(seq=19, sos=True), "real", "p", 3)   # 해제 뒤 다시 누름(늦게 도착)
+        h.ingest(soldier(seq=11, sos=True), "real", "p", 4)   # 첫 구간 안의 늦은 패킷: 알리지 않음
+        self.assertEqual(kinds(h), ["sos", "sos"])
+
+    def test_late_env_packet_still_reports_its_events(self):
+        h = Hub()
+        h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 5, "temp": 25}, "real", "p", 0)
+        self.assertEqual(h.ingest({"type": "env", "node": 49, "boot": 1, "seq": 4, "temp": 20,
+                                   "events": ["shock"]}, "real", "p", 1), "late")
+        self.assertEqual(kinds(h), ["env:shock"])
+        self.assertEqual(h.nodes[49].latest["env"]["temp"], 25)
+
+    def test_real_source_wins_over_virtual_for_same_node(self):
+        h = Hub()
+        h.ingest(soldier(boot=100, seq=1), "real", "p", 0)
+        self.assertEqual(h.ingest(soldier(boot=200, seq=1, virtual=True), "virtual", "sim", 1), "shadowed")
+        self.assertEqual(h.ingest(soldier(boot=100, seq=2), "real", "p", 2), "ok")
+        self.assertEqual(kinds(h), [])
+        self.assertEqual(h.nodes[1].shadowed, 1)
+        # 실측이 두절 판정 시간 넘게 조용하면 가상이 이어받는다
+        t = 2 + h.nodes[1].timeout_s() + 1
+        h.tick(t)
+        self.assertEqual(h.ingest(soldier(boot=200, seq=2, virtual=True), "virtual", "sim", t), "ok")
+        self.assertEqual((h.nodes[1].source, h.nodes[1].boot), ("virtual", 200))
+        # 실측이 돌아오면 바로 실측으로 바뀐다
+        self.assertEqual(h.ingest(soldier(boot=100, seq=3), "real", "p", t + 1), "ok")
+        self.assertEqual(h.ingest(soldier(boot=200, seq=3, virtual=True), "virtual", "sim", t + 2), "shadowed")
+        self.assertEqual(kinds(h), ["comm_lost", "source_change", "source_change"])
+        self.assertNotIn("reboot", kinds(h))
+
+    def test_anchor_only_node_is_not_marked_lost(self):
+        h = Hub()
+        h.ingest({"type": "anchor", "node": 0x20, "boot": 1, "seq": 1, "obs": []}, "real", "p", 0)
+        self.assertIsNone(h.nodes[0x20].timeout_s())
+        h.tick(1000)
+        self.assertEqual(kinds(h), [])
+        self.assertIsNone(h.snapshot(1000)["nodes"]["32"]["timeout_s"])
 
     def test_invalid_and_meta(self):
         h = Hub()
@@ -201,6 +270,8 @@ class HubTest(unittest.TestCase):
             '{"rx_ts":1.0,"source":"real","port":"p","result":"text","text":"ets Jun  8"}',
             '{"rx_ts":2.0,"source":"real","port":"p","result":"ok","obj":{"type":"env","node":49,"boot":1,"seq":1}}',
             '{"rx_ts":3.0,"source":"real","port":"p","result":"invalid","obj":{"type":"x"}}',
+            '{"rx_ts":3.5,"source":"real","port":"p","result":"late","obj":{"type":"env","node":49,"boot":1,"seq":0}}',
+            '{"rx_ts":3.6,"source":"virtual","port":"sim","result":"shadowed","obj":{"type":"env","node":49,"boot":2,"seq":1}}',
             '{"type":"soldier","node":1,"boot":1,"seq":1}',
             "not json",
         ]
@@ -210,8 +281,8 @@ class HubTest(unittest.TestCase):
             recs = list(iter_log_records(f.name))
         finally:
             os.unlink(f.name)
-        self.assertEqual([ts for ts, _ in recs], [2.0, None])
-        self.assertEqual([o["type"] for _, o in recs], ["env", "soldier"])
+        self.assertEqual([ts for ts, _ in recs], [2.0, 3.5, None])
+        self.assertEqual([o["type"] for _, o in recs], ["env", "env", "soldier"])
 
 
 if __name__ == "__main__":

@@ -136,6 +136,11 @@ uint8_t sensorsTakeEvents() {
 }
 
 void sensorsSetVirtualTemp(float c) {
+  if (isnan(c) && !isnan(s_virtualTemp)) {
+    // 가상값으로 생긴 열 노출 상태를 지운다. 실측이 실패하는 중이면 직전 상태 유지 규칙 때문에
+    // 가상 상태가 실측처럼 남는다. 실측이 성공하면 다음 측정에서 다시 판정된다.
+    s_cur.state &= ~ENV_ST_HEAT;
+  }
   s_virtualTemp = c;
   s_lastDhtMs = 0;  // 다음 poll에서 즉시 반영
 }

@@ -10,6 +10,7 @@
 """
 
 import argparse
+import math
 import os
 import sys
 import threading
@@ -26,8 +27,8 @@ from squadlink.web import App, serve  # noqa: E402
 
 def positive_float(text):
     v = float(text)
-    if not v > 0:
-        raise argparse.ArgumentTypeError("0보다 커야 합니다")
+    if not (v > 0 and math.isfinite(v)):
+        raise argparse.ArgumentTypeError("0보다 큰 유한한 수여야 합니다")
     return v
 
 
@@ -55,6 +56,9 @@ def parse_args(argv=None):
     p.add_argument("--host", default="0.0.0.0", help="휴대폰 접속을 위해 기본은 모든 인터페이스")
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--log-dir", default="logs")
+    p.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN",
+                   help="쓰기 API(POST)를 허용할 다른 출처. 관제 UI를 별도 개발 서버에서 띄울 때 "
+                        "(예: http://localhost:5173). 여러 번 지정 가능")
     return p.parse_args(argv)
 
 
@@ -62,7 +66,7 @@ def main(argv=None):
     args = parse_args(argv)
     logger = JsonlLogger(args.log_dir, meta=vars(args))
     hub = Hub(logger=logger)
-    app = App(hub)
+    app = App(hub, allow_origins=args.allow_origin)
 
     for port in args.serial:
         r = SerialReader(port, args.baud, hub, logger)
@@ -72,12 +76,12 @@ def main(argv=None):
         app.replayer = Replayer(args.replay, hub, speed=args.replay_speed)
         app.replayer.start()
     if args.virtual:
+        nodes = [n for n in args.virtual_nodes.split(",") if n.strip()]
         try:
-            nodes = [int(n, 0) for n in args.virtual_nodes.split(",") if n.strip()]
-        except ValueError:
-            sys.exit("--virtual-nodes: 쉼표로 구분한 정수여야 합니다 (예: 2 또는 1,2,0x31)")
-        app.set_virtual({"scenario": args.virtual, "nodes": nodes, "speed": args.virtual_speed,
-                         "loop": args.virtual_loop, "loss_rate": args.loss_rate})
+            app.set_virtual({"scenario": args.virtual, "nodes": nodes, "speed": args.virtual_speed,
+                             "loop": args.virtual_loop, "loss_rate": args.loss_rate})
+        except ValueError as e:
+            sys.exit(f"--virtual 설정 오류: {e}")
 
     threading.Thread(target=app.ticker, daemon=True, name="tick").start()
     httpd = serve(app, args.host, args.port)

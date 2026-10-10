@@ -4,6 +4,7 @@
 시나리오는 (시각 초, 노드, 동작, 값) 목록이다. step(t)에 모의 시각을 넘겨 진행하므로 시험에서도 쓴다.
 """
 
+import math
 import random
 import threading
 import time
@@ -320,8 +321,8 @@ class VirtualRunner(threading.Thread):
     """Simulator를 실시간(speed 배속)으로 돌려 허브에 넣는다."""
 
     def __init__(self, hub, clock=time.time, speed=1.0, **sim_kwargs):
-        if not speed > 0:
-            raise ValueError("virtual speed must be > 0")
+        if not (speed > 0 and math.isfinite(speed)):
+            raise ValueError("virtual speed must be a finite number > 0")
         super().__init__(daemon=True, name="virtual")
         self.hub = hub
         self.clock = clock

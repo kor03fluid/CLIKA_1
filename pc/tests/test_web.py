@@ -61,6 +61,53 @@ class WebTest(unittest.TestCase):
             self.assertEqual(status, 400, bad)
             self.assertTrue(self.app.virtual_status()["running"], bad)
 
+    def raw_post(self, path, body, headers):
+        import http.client
+        c = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
+        c.request("POST", path, body, headers)
+        r = c.getresponse()
+        data = r.read()
+        hdrs = dict(r.getheaders())
+        c.close()
+        return r.status, (json.loads(data) if data else None), hdrs
+
+    def test_write_requests_need_json_and_allowed_origin(self):
+        self.hub.ingest({"type": "soldier", "node": 2, "boot": 1, "seq": 1, "sos": True}, "real", "p", 0)
+        host = "127.0.0.1:%d" % self.httpd.server_address[1]
+        js = {"Content-Type": "application/json"}
+        # 브라우저가 사전 확인 없이 보낼 수 있는 text/plain은 거부
+        self.assertEqual(self.raw_post("/api/events/1/resolve", "{}", {"Content-Type": "text/plain"})[0], 415)
+        # 다른 출처의 웹페이지는 거부
+        status, _, _ = self.raw_post("/api/events/1/resolve", "{}", dict(js, Origin="http://evil.example"))
+        self.assertEqual(status, 403)
+        self.assertIsNone(self.hub.list_events()[0]["resolved_at"])
+        # 같은 출처(디버그 화면)는 허용
+        self.assertEqual(self.raw_post("/api/events/1/ack", "{}", dict(js, Origin="http://" + host))[0], 200)
+        # --allow-origin으로 지정한 출처는 허용하고 CORS 헤더를 돌려준다
+        self.app.allow_origins = {"http://localhost:5173"}
+        status, _, hdrs = self.raw_post("/api/events/1/resolve", "{}", dict(js, Origin="http://localhost:5173"))
+        self.assertEqual(status, 200)
+        self.assertEqual(hdrs.get("Access-Control-Allow-Origin"), "http://localhost:5173")
+
+    def test_preflight_only_for_allowed_origins(self):
+        def preflight(origin, method="POST"):
+            req = urllib.request.Request(self.base + "/api/cmd", method="OPTIONS", headers={
+                "Origin": origin, "Access-Control-Request-Method": method})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return r.headers.get("Access-Control-Allow-Origin")
+        self.assertIsNone(preflight("http://evil.example"))
+        self.assertEqual(preflight("http://evil.example", "GET"), "*")
+        self.app.allow_origins = {"http://localhost:5173"}
+        self.assertEqual(preflight("http://localhost:5173"), "http://localhost:5173")
+
+    def test_malformed_requests_get_error_responses(self):
+        js = {"Content-Type": "application/json"}
+        self.assertEqual(self.raw_post("/api/virtual", "{}", dict(js, **{"Content-Length": "abc"}))[0], 400)
+        for body in ('{"scenario":"normal","nodes":[1e400]}', '{"scenario":"normal","speed":1e400}',
+                     '{"scenario":"normal","speed":Infinity}', '[1,2]', '{bad'):
+            self.assertEqual(self.raw_post("/api/virtual", body, js)[0], 400, body)
+        self.assertFalse(self.app.virtual_status()["running"])
+
     def test_events_bad_query(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get("/api/events?limit=abc")

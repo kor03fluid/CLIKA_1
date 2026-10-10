@@ -2,6 +2,7 @@
 #include "config.h"
 #include "packet.h"
 #include "node.h"
+#include "json_out.h"
 #include "ble_tx.h"
 #include <BLEDevice.h>
 #include <BLEScan.h>
@@ -20,7 +21,7 @@ struct SoldierObs {
   int8_t   reported_avg;
 };
 
-static_assert(ANCHOR_STALE_MS / 100 < 0xFFFF, "age_ds(0.1초, 16bit)가 ANCHOR_STALE_MS를 담지 못함");
+static_assert(ANCHOR_STALE_MS <= 0xFFFF, "age_ms(16bit)가 ANCHOR_STALE_MS를 담지 못함");
 
 static SoldierObs s_tab[ANCHOR_MAX_SOLDIERS];
 static AnchorStats s_stats = {};
@@ -84,9 +85,14 @@ class ScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     memcpy(&h, b + 2, sizeof(h));
     if (pktVersion(h) != PKT_VERSION) return;
     uint8_t type = pktType(h);
-    if (type != PKT_SOLDIER_STATUS && type != PKT_SOLDIER_POS) return;
-    if (h.flags & PKT_FLAG_RELAYED) {
+    if (type != PKT_SOLDIER_STATUS && type != PKT_GPS && type != PKT_EVENT) return;
+    if (h.node_id < 0x01 || h.node_id > 0x1F) return;  // 병사 노드(halo_*)만
+    if (h.flags & PKT_FLAG_RELAYED) {  // 중계된 패킷으로 관측을 만들지 않는다
       s_stats.rx_relayed_skip++;
+      return;
+    }
+    if (h.flags & PKT_FLAG_SIMULATION) {  // 실제 앵커는 실제 병사 패킷만 관측한다
+      s_stats.rx_simulation_skip++;
       return;
     }
     recordSoldier(h.node_id, h.boot_id, h.seq, dev.getRSSI(), millis());
@@ -105,18 +111,6 @@ void anchorBegin() {
   s_scan->setWindow(ANCHOR_SCAN_WINDOW_MS);
 }
 
-static void printReportJson(const PktAnchorReport& p) {
-  Serial.printf("{\"type\":\"anchor\",\"node\":%u,\"boot\":%u,\"seq\":%u,\"obs\":[",
-                p.h.node_id, p.h.boot_id, p.h.seq);
-  for (uint8_t i = 0; i < p.count; i++) {
-    const AnchorEntry& e = p.e[i];
-    Serial.printf("%s{\"soldier\":%u,\"last_seq\":%u,\"rssi\":%d,\"rssi_avg\":%d,\"n\":%u,\"age_ms\":%u}",
-                  i ? "," : "", e.soldier_id, e.last_seq, e.rssi_last, e.rssi_avg, e.samples,
-                  (unsigned)e.age_ds * 100u);
-  }
-  Serial.printf("],\"ms\":%lu}\n", (unsigned long)millis());
-}
-
 // 보고에 실린 병사를 보고 완료로 표시한다. 보고 뒤에 받은 표본 수는 남긴다.
 static void markReported(const SoldierObs* snap, uint8_t n) {
   portENTER_CRITICAL(&s_mux);
@@ -131,31 +125,26 @@ static void markReported(const SoldierObs* snap, uint8_t n) {
   portEXIT_CRITICAL(&s_mux);
 }
 
-// 보고 패킷을 모두 큐에 넣을 수 있을 때만 보낸다. 자리가 없으면 seq를 쓰지 않고 false.
+// 병사마다 관측 패킷 하나(각자 seq). 모두 큐에 넣을 수 있을 때만 보내고, 자리가 없으면 seq를 쓰지 않고 false.
+// rssi_dbm은 마지막으로 직접 받은 패킷(observed_seq)의 값이다. 평활은 서버가 한다.
 static bool sendReports(const SoldierObs* snap, uint8_t n, uint32_t now) {
-  uint8_t packets = (n + ANCHOR_ENTRIES_PER_PKT - 1) / ANCHOR_ENTRIES_PER_PKT;
-  if (bleTxFree() < packets) {
+  if (bleTxFree() < n) {
     s_stats.queue_full_skip++;
     return false;
   }
-  for (uint8_t i = 0; i < n; i += ANCHOR_ENTRIES_PER_PKT) {
-    PktAnchorReport p = {};
-    nodeFillHeader(p.h, PKT_ANCHOR_REPORT, 0);
-    for (uint8_t k = 0; k < ANCHOR_ENTRIES_PER_PKT && i + k < n; k++) {
-      const SoldierObs& o = snap[i + k];
-      AnchorEntry& e = p.e[k];
-      uint32_t ageDs = elapsedMs(now, o.last_ms) / 100;
-      e.soldier_id = o.id;
-      e.last_seq = o.last_seq;
-      e.rssi_last = o.rssi_last;
-      e.rssi_avg = (int8_t)lroundf(o.rssi_avg);
-      e.samples = o.samples;
-      e.age_ds = ageDs > 0xFFFF ? 0xFFFF : ageDs;
-      p.count++;
-    }
+  for (uint8_t i = 0; i < n; i++) {
+    const SoldierObs& o = snap[i];
+    PktAnchorObs p = {};
+    nodeFillHeader(p.h, PKT_ANCHOR_OBS, 0);  // 실제 관측이므로 항상 device
+    uint32_t age = elapsedMs(now, o.last_ms);
+    p.observed_node = o.id;
+    p.observed_boot = o.boot_id;
+    p.observed_seq = o.last_seq;
+    p.rssi_dbm = o.rssi_last;
+    p.age_ms = age > 0xFFFF ? 0xFFFF : age;
     bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), 1);  // 자리는 위에서 확인
     s_stats.reports++;
-    printReportJson(p);
+    printAnchorObsJson(p);
   }
   markReported(snap, n);
   return true;

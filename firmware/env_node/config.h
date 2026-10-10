@@ -3,8 +3,9 @@
 #include <Arduino.h>
 
 // ===== 노드 식별 =====
-// ID 대역(안, 팀원 B와 확정): 병사 0x01~0x0F, 게이트웨이·중계 0x20~0x2F, 환경 0x30~0x3F
-#define NODE_ID 0x31  // 환경 노드 1번(WROOM 1). 예비 WROOM은 0x32로 빌드
+// 무선 패킷의 숫자 ID와 규격 문자열 ID(안, 팀원 B와 확정. node.cpp nodeName):
+//   0x01~0x1F halo_01~  · 0x20~0x27 gateway_01~ · 0x28~0x2F relay_01~ · 0x31~0x3F env_01~
+#define NODE_ID 0x31  // env_01 (WROOM 1). 예비 WROOM은 0x32(env_02)로 빌드
 
 // ===== 핀 (ESP32 WROOM DevKit 기준) =====
 // 5V 출력 신호를 GPIO·ADC에 직접 넣지 않는다. 모듈은 3.3V로 공급하거나 분압·레벨 변환한다.
@@ -29,8 +30,6 @@
 #define REED_OPEN_LEVEL    HIGH  // 자석 떨어짐(열림) → 풀업으로 HIGH
 #define REED_DEBOUNCE_MS   50
 
-#define LIGHT_INVERT 0  // 분압 회로가 밝을수록 값이 작아지면 1
-
 // ===== 판단 (센서 로그로 조정) =====
 // 공기 온도 기준 "환경 열 노출 주의". 개인 체온·과열 판정이 아니다.
 #define HEAT_ON_C  35.0f
@@ -44,14 +43,15 @@
 // 기준(고정 5초)과 적응 설정을 비교한다. 시리얼 명령 "mode fixed|adaptive"로 전환
 #define TX_MODE_ADAPTIVE_DEFAULT 1
 #define TX_FIXED_INTERVAL_MS  5000
-#define ENV_HEARTBEAT_MS      30000  // 적응: 변화 없을 때 최대 간격
+// 노드는 현재 정상 보고 주기를 heartbeat_interval_ms로 선언한다. 서버 두절 기준 = max(15초, 3×주기+2초)
+#define ENV_HEARTBEAT_MS      30000  // 적응: 변화 없을 때 최대 간격 → 두절 기준 92초
 #define ENV_ALERT_INTERVAL_MS 10000  // 적응: 열 노출·불꽃 상태 지속 중 간격
 #define ENV_MIN_GAP_MS        3000   // 적응: 값 변화로 인한 송신 최소 간격
-#define EVENT_MIN_GAP_MS      2000   // 이벤트 즉시 송신 최소 간격(소리 센서 연속 반응 억제)
-#define EVENT_REPEATS         3      // 이벤트 패킷 반복 광고 창 수(같은 seq)
+#define EVENT_MIN_GAP_MS      2000   // 감지(소리·충격 등) 즉시 송신 최소 간격(연속 반응 억제)
+#define EVENT_REPEATS         3      // 사건·감지 패킷 반복 광고 창 수(같은 seq)
 #define DELTA_TEMP_C    1.0f
 #define DELTA_HUM_PCT   5
-#define DELTA_LIGHT_PCT 10
+#define DELTA_LIGHT_RAW 400  // 12bit 원시값 기준(약 10%)
 
 // ===== BLE 광고 =====
 // 송신 출력은 실물 시험으로 수신 목표를 만족하는 낮은 고정값을 고른다.

@@ -58,22 +58,31 @@ class JsonlLogger:
         for f in dirty:
             f.flush()
 
-    def rx(self, ts, source, port, result, obj, error=None):
-        rec = {"rx_ts": ts, "source": source, "port": port, "result": result, "obj": obj}
-        if error:
-            rec["error"] = error
+    # rx.jsonl 한 줄: rx_ts(서버 UTC epoch 초) · input(serial/sim/replay) · port · result · obj
+    def rx(self, ts, input_, port, result, obj, errors=None, warnings=None):
+        rec = {"rx_ts": ts, "input": input_, "port": port, "result": result, "obj": obj}
+        if errors:
+            rec["errors"] = list(errors)
+        if warnings:
+            rec["warnings"] = list(warnings)
         self._write(self._rx, rec)
 
-    def text(self, ts, source, port, line):
-        """JSON이 아닌 시리얼 줄(부팅 로그 등)."""
-        self._write(self._rx, {"rx_ts": ts, "source": source, "port": port, "result": "text",
+    def text(self, ts, input_, port, line):
+        """JSON이 아닌 시리얼 줄(ESP32 부팅 메시지 등)."""
+        self._write(self._rx, {"rx_ts": ts, "input": input_, "port": port, "result": "text",
                                "text": line})
+
+    def diag(self, ts, input_, port, obj):
+        """장치 진단 줄("# {...}"). 데이터 스트림과 구분해 남긴다."""
+        self._write(self._rx, {"rx_ts": ts, "input": input_, "port": port, "result": "diag",
+                               "diag": obj})
 
     def event(self, ev):
         self._write(self._ev, {"rec": "event", **ev})
 
-    def event_update(self, ts, event_id, action, by):
-        self._write(self._ev, {"rec": action, "ts": ts, "id": event_id, "by": by})
+    def event_update(self, ts, source, event_id, action, by):
+        self._write(self._ev, {"rec": action, "ts": ts, "source": source, "event_id": event_id,
+                               "by": by})
 
     def flush(self, timeout=5.0):
         """지금까지 넣은 줄이 파일에 쓰일 때까지 기다린다(시험·종료용)."""

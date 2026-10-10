@@ -17,21 +17,20 @@
   h2 { font-size:14px; margin:16px 0 6px; color:var(--mute); }
   .note { color:var(--mute); font-size:12px; }
   .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fill, minmax(260px, 1fr)); gap:8px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px; }
-  .card.off { opacity:.55; }
-  .tag { display:inline-block; white-space:nowrap; padding:0 6px; border-radius:4px; font-size:11px; border:1px solid currentColor; }
-  .crit { color:var(--crit); } .warn { color:var(--warn); } .ok { color:var(--ok); } .virt { color:var(--virt); }
+  .tag { display:inline-block; white-space:nowrap; padding:0 6px; border-radius:4px; font-size:11px;
+         border:1px solid currentColor; }
+  .crit { color:var(--crit); } .warn { color:var(--warn); } .ok { color:var(--ok); }
+  .virt { color:var(--virt); } .mute { color:var(--mute); }
   table { border-collapse:collapse; width:100%; font-size:13px; }
-  td, th { border-bottom:1px solid var(--line); padding:3px 4px; text-align:left; }
+  td, th { border-bottom:1px solid var(--line); padding:3px 4px; text-align:left; vertical-align:top; }
+  tr.stale td { opacity:.6; }
   .scroll { overflow-x:auto; }
   button, select, input { font:inherit; }
-  pre { white-space:pre-wrap; word-break:break-all; margin:4px 0 0; font-size:11px; color:var(--mute); }
 </style>
 </head>
 <body>
 <h1>SQUAD LINK PC 서버 디버그 화면</h1>
-<div class="note">데이터 확인용. 관제 UI는 팀장 담당이며 같은 API(/api/state, /api/stream)를 쓴다.</div>
+<div class="note">데이터 확인용. 관제 UI는 팀장 담당이며 같은 API(/api/state, /api/stream)를 쓴다. 시각은 한국 시간.</div>
 <div class="row" style="margin-top:8px">
   <span id="conn" class="tag">연결 중</span>
   <span id="totals" class="note"></span>
@@ -40,87 +39,114 @@
 <h2>가상 노드</h2>
 <div class="row">
   <select id="scenario"></select>
-  <input id="vnodes" placeholder="노드(예: 2 또는 1,2,0x31)" size="18">
+  <input id="vnodes" placeholder="노드(예: halo_02 또는 halo_01,env_01)" size="28">
   <label><input type="checkbox" id="vloop"> 반복</label>
   <button id="vstart">시작</button>
   <button id="vstop">중지</button>
   <span id="vstatus" class="note"></span>
 </div>
 
-<h2>노드</h2>
-<div id="nodes" class="cards"></div>
+<h2>분대원</h2>
+<div class="scroll"><table id="soldiers"></table></div>
+
+<h2>환경 노드</h2>
+<div class="scroll"><table id="envs"></table></div>
+
+<h2>사건</h2>
+<div class="scroll"><table id="events"></table></div>
 
 <h2>앵커 관측 (직접 수신 RSSI)</h2>
 <div class="scroll"><table id="anchors"></table></div>
 
-<h2>이벤트</h2>
-<div class="scroll"><table id="events"></table></div>
+<h2>최근 무효·경고 패킷</h2>
+<div class="scroll"><table id="issues"></table></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const hex = (n) => "0x" + Number(n).toString(16).padStart(2, "0");
-const fmtTime = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString() : "-";
-const label = (o) => o.source === "replay" ? '<span class="tag virt">재생</span>'
-  : (o.virtual ? '<span class="tag virt">가상</span>' : '<span class="tag ok">실측</span>');
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const kst = (iso) => iso ? new Date(iso).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul" }) : "-";
+const CONN = { unassigned: ["장치 미배정", "mute"], waiting: ["연결 대기", "warn"],
+               connected: ["연결", "ok"], lost: ["통신 두절", "crit"] };
+const EVSTATE = { open: ["미확인", "crit"], acknowledged: ["확인", "warn"], resolved: ["종료", "mute"] };
+const EVTYPE = { sos: "SOS", impact: "충격", prolonged_still: "장시간 무움직임",
+                 heat_exposure: "환경 열 노출 주의", connection_lost: "통신 두절" };
+const tag = (pair) => `<span class="tag ${pair[1]}">${esc(pair[0])}</span>`;
+const srcTag = (source, input) => input === "replay" ? '<span class="tag virt">재생</span>'
+  : source === "simulation" ? '<span class="tag virt">가상</span>'
+  : source === "device" ? '<span class="tag ok">실측</span>' : "";
+const yn = (v) => v === true ? "예" : v === false ? "아니오" : "측정 불가";
 let events = [];
 
 function renderState(s) {
   const t = s.totals;
-  $("totals").textContent = `패킷 ${t.packets} · 중복 제거 ${t.dup} · 늦게 옴 ${t.late} · 무효 ${t.invalid} · 오류 ${t.error} · 입력 ` +
+  $("totals").textContent = `수신 ${t.accepted} · 중복 ${t.dup} · 지연 ${t.late + t.stale_boot} · ` +
+    `무효 ${t.invalid} · 경고 ${t.warnings} · 가려짐 ${t.shadowed} · 입력 ` +
     ((s.inputs || []).map((i) => `${i.port}:${i.connected ? "연결" : "끊김"}`).join(", ") || "없음");
   const v = s.virtual || {};
   $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` : "중지";
 
-  $("nodes").innerHTML = Object.values(s.nodes).map((n) => {
-    let body = "";
-    if (n.latest.soldier) {
-      const q = n.latest.soldier, gps = q.gps || {};
-      // 장치에서 온 값은 모두 esc()를 거친다(디버그 화면에 스크립트가 끼어들지 않게)
-      const reasons = Array.isArray(q.reasons) ? q.reasons.join(",") : "";
-      body = `심박 ${q.hr_valid ? esc(q.hr) : "접촉 불량"} · 움직임 ${esc(q.motion)} · 모드 ${esc(q.op_mode)}<br>` +
-        `SOS ${q.sos ? '<b class="crit">ON</b>' : "off"} · 경보 ${esc(q.alert)} ${esc(reasons)}<br>` +
-        `GPS ${gps.valid ? esc(gps.lat) + ", " + esc(gps.lon) : "무효"} · 체온 ${esc(q.body_temp ?? "-")}${q.body_temp_virtual ? " (가상)" : ""}`;
-    } else if (n.latest.env) {
-      const e = n.latest.env;
-      const state = Array.isArray(e.state) ? e.state.join(",") : "";
-      body = `온도 ${esc(e.temp ?? "-")}°C · 습도 ${esc(e.hum ?? "-")}% · 밝기 ${esc(e.light ?? "-")}%<br>` +
-        `상태 ${esc(state || "-")} · 송신 ${esc(e.tx_mode)}`;
-    }
-    const c = n.counters;
-    return `<div class="card ${n.online ? "" : "off"}">
-      <b>${hex(n.node)}</b> ${esc(n.kind)} ${label(n)}
-      <span class="tag ${n.online ? "ok" : "crit"}">${n.online ? "수신 중" : "통신 두절"}</span>
-      ${n.via === "relay" ? '<span class="tag warn">중계 경유</span>' : ""}
-      <div>${body}</div>
-      <div class="note">마지막 수신 ${esc(n.age_s)}s 전 · boot ${esc(n.boot)} seq ${esc(n.last_seq)} ·
-        수신 ${esc(c.rx)} 중복 ${esc(c.dup)} 누락 ${esc(c.missing)} 늦게 옴 ${esc(c.late)} 중계 ${esc(c.relayed)}
-        재부팅 ${esc(c.reboots)} 가려짐 ${esc(c.shadowed)}</div>
-    </div>`;
-  }).join("") || '<div class="note">수신한 노드 없음</div>';
+  $("soldiers").innerHTML = "<tr><th>분대원</th><th>장치</th><th>연결</th><th>출처</th><th>모드</th>" +
+    "<th>심박</th><th>움직임</th><th>위치</th><th>마지막 수신</th><th>진행 중 사건</th></tr>" +
+    s.soldiers.map((x) => {
+      const st = x.status || {};
+      const hr = x.status ? (st.heart_rate_quality === "good" ? `${esc(st.heart_rate_bpm)} bpm`
+                                                             : `측정 불가(${esc(st.heart_rate_quality)})`) : "-";
+      const loc = x.location ? (x.location.fix_valid
+          ? `${esc(x.location.latitude_deg)}, ${esc(x.location.longitude_deg)}`
+          : `미수신${x.location.location_updated_at ? " (마지막 " + esc(kst(x.location.location_updated_at)) + ")" : ""}`)
+        : "-";
+      return `<tr class="${x.data_stale && x.connection_state !== "unassigned" ? "stale" : ""}">
+        <td>${esc(x.soldier_id)}${x.name ? " " + esc(x.name) : ""}</td><td>${esc(x.assigned_node_id ?? "-")}</td>
+        <td>${tag(CONN[x.connection_state] || [x.connection_state, ""])}</td>
+        <td>${srcTag(x.source, x.input)}${x.route === "relay" ? ' <span class="tag warn">중계</span>' : ""}</td>
+        <td>${x.status ? (st.mode === "covert" ? "기도비닉" : "일반") : "-"}</td>
+        <td>${hr}</td><td>${esc(st.motion_state ?? "-")}</td><td>${loc}</td>
+        <td>${esc(kst(x.last_seen_at))}</td><td>${esc(x.active_event_ids.length || "")}</td></tr>`;
+    }).join("");
 
-  const rows = [];
-  for (const [a, t] of Object.entries(s.anchors))
-    for (const [sid, o] of Object.entries(t))
-      rows.push(`<tr><td>${hex(a)}</td><td>${hex(sid)}</td><td>${esc(o.rssi)}</td><td>${esc(o.rssi_avg)}</td>` +
-        `<td>${esc(o.n)}</td><td>${esc(o.age_s)}s</td><td>${o.virtual ? "가상" : "실측"}</td></tr>`);
-  $("anchors").innerHTML = "<tr><th>앵커</th><th>병사</th><th>RSSI</th><th>평균</th><th>표본</th><th>경과</th><th></th></tr>" +
-    (rows.join("") || '<tr><td colspan="7" class="note">관측 없음(구역 미확보)</td></tr>');
+  $("envs").innerHTML = "<tr><th>노드</th><th>설치 지점</th><th>연결</th><th>출처</th><th>공기 온도</th>" +
+    "<th>습도</th><th>조도(원시값)</th><th>소리·불꽃·충격</th><th>리드 닫힘</th><th>마지막 수신</th></tr>" +
+    (s.environment_nodes.map((x) => {
+      const e = x.environment || {};
+      return `<tr class="${x.data_stale ? "stale" : ""}"><td>${esc(x.node_id)}</td><td>${esc(x.location_name ?? "-")}</td>
+        <td>${tag(CONN[x.connection_state] || [x.connection_state, ""])}</td><td>${srcTag(x.source, x.input)}</td>
+        <td>${x.environment ? esc(e.air_temperature_c ?? "측정 불가") + " °C" : "-"}</td>
+        <td>${x.environment ? esc(e.humidity_pct ?? "측정 불가") + " %" : "-"}</td>
+        <td>${x.environment ? esc(e.light_raw ?? "측정 불가") : "-"}</td>
+        <td>${x.environment ? [e.sound_detected, e.flame_detected, e.shock_detected].map(yn).map(esc).join(" · ") : "-"}</td>
+        <td>${x.environment ? esc(yn(e.reed_closed)) : "-"}</td><td>${esc(kst(x.last_seen_at))}</td></tr>`;
+    }).join("") || '<tr><td colspan="10" class="note">환경 노드 없음</td></tr>');
+
+  $("anchors").innerHTML = "<tr><th>앵커</th><th>관측 노드</th><th>RSSI</th><th>관측 경과</th><th>출처</th></tr>" +
+    (s.anchor_observations.map((a) => `<tr><td>${esc(a.anchor_id)}</td><td>${esc(a.observed_node_id)}</td>
+      <td>${esc(a.rssi_dbm)} dBm</td><td>${esc((a.age_ms / 1000).toFixed(1))} s</td><td>${srcTag(a.source, a.input)}</td></tr>`).join("")
+     || '<tr><td colspan="5" class="note">관측 없음(구역 미확보)</td></tr>');
+
+  const issues = [...s.recent_invalid.map((i) => ["무효", i.received_at, i.node_id, i.errors]),
+                  ...s.recent_warnings.map((i) => ["경고", i.received_at, i.node_id, i.warnings])]
+    .sort((a, b) => (a[1] < b[1] ? 1 : -1)).slice(0, 15);
+  $("issues").innerHTML = "<tr><th></th><th>시각</th><th>노드</th><th>내용</th></tr>" +
+    (issues.map((i) => `<tr><td>${esc(i[0])}</td><td>${esc(kst(i[1]))}</td><td>${esc(i[2] ?? "-")}</td>
+      <td>${esc(i[3].join(" / "))}</td></tr>`).join("") || '<tr><td colspan="4" class="note">없음</td></tr>');
 }
 
 function renderEvents() {
-  const cls = { critical: "crit", warning: "warn", info: "" };
-  $("events").innerHTML = "<tr><th>#</th><th>시각</th><th>노드</th><th>종류</th><th></th><th>확인/해결</th></tr>" +
-    events.slice().reverse().slice(0, 100).map((e) => `<tr>
-      <td>${esc(e.id)}</td><td>${esc(fmtTime(e.ts))}</td><td>${hex(e.node)}</td>
-      <td class="${cls[e.level] || ""}">${esc(e.kind)}</td><td>${label(e)}</td>
-      <td>${e.acked_at ? "확인 " + fmtTime(e.acked_at) : `<button data-a="ack" data-id="${esc(e.id)}">확인</button>`}
-          ${e.resolved_at ? "해결 " + fmtTime(e.resolved_at) : `<button data-a="resolve" data-id="${esc(e.id)}">해결</button>`}</td>
-    </tr>`).join("");
+  $("events").innerHTML = "<tr><th>#</th><th>최초 수신</th><th>사건</th><th>분대원·노드</th><th>출처</th>" +
+    "<th>상태</th><th>보고 수</th><th>조작</th></tr>" +
+    events.slice().reverse().slice(0, 100).map((e) => {
+      const id = esc(e.event_id), src = esc(e.source ?? "");
+      return `<tr><td>${esc(e.n)}</td><td>${esc(kst(e.first_received_at))}</td>
+        <td class="${e.event_type === "sos" ? "crit" : ""}">${esc(EVTYPE[e.event_type] || e.event_type)}${e.late ? " (지연 수신)" : ""}</td>
+        <td>${esc(e.soldier_id ?? "-")} · ${esc(e.node_id)}</td><td>${srcTag(e.source, e.input)}</td>
+        <td>${tag(EVSTATE[e.event_state] || [e.event_state, ""])}</td><td>${esc(e.report_count)}</td>
+        <td>${e.event_state === "open" ? `<button data-a="ack" data-id="${id}" data-src="${src}">확인</button>` : esc(kst(e.acknowledged_at))}
+            ${e.event_state !== "resolved" ? `<button data-a="resolve" data-id="${id}" data-src="${src}">종료</button>` : esc(kst(e.resolved_at))}</td></tr>`;
+    }).join("");
 }
 
 function upsertEvent(e) {
-  const i = events.findIndex((x) => x.id === e.id);
+  const i = events.findIndex((x) => x.event_id === e.event_id && x.source === e.source);
   if (i >= 0) events[i] = e; else events.push(e);
   if (events.length > 500) events = events.slice(-500);
 }
@@ -134,8 +160,9 @@ async function post(path, body) {
 $("events").addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-a]");
   if (!b) return;
-  upsertEvent(await post(`/api/events/${b.dataset.id}/${b.dataset.a}`, { by: "debug" }));
-  renderEvents();
+  const q = b.dataset.src ? `?source=${encodeURIComponent(b.dataset.src)}` : "";
+  const r = await post(`/api/events/${encodeURIComponent(b.dataset.id)}/${b.dataset.a}${q}`, { by: "debug" });
+  if (r.event_id) { upsertEvent(r); renderEvents(); }
 });
 $("vstart").onclick = () => post("/api/virtual", {
   enabled: true, scenario: $("scenario").value, loop: $("vloop").checked,
@@ -143,7 +170,7 @@ $("vstart").onclick = () => post("/api/virtual", {
 $("vstop").onclick = () => post("/api/virtual", { enabled: false });
 
 fetch("/api/scenarios").then((r) => r.json()).then((list) => {
-  $("scenario").innerHTML = list.map((n) => `<option ${n === "demo" ? "selected" : ""}>${n}</option>`).join("");
+  $("scenario").innerHTML = list.map((n) => `<option ${n === "demo" ? "selected" : ""}>${esc(n)}</option>`).join("");
 });
 fetch("/api/events").then((r) => r.json()).then((list) => { list.forEach(upsertEvent); renderEvents(); });
 

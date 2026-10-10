@@ -1,13 +1,18 @@
 """HTTP API + SSE. 노트북·휴대폰 관제 화면이 같은 서버 상태를 동시에 받는다.
 
-GET  /api/state                현재 상태 전체
-GET  /api/events?since=&limit= 이벤트 목록
-GET  /api/stream               SSE: "state"(변경 시, 최대 4회/초)·"event"(즉시)
-POST /api/events/<id>/ack      지휘관 확인      body: {"by": "..."} (선택)
-POST /api/events/<id>/resolve  실제 해결
-POST /api/virtual              가상 노드 시작/중지 body: {"enabled", "scenario", "nodes", "speed", "loop", "loss_rate"}
-POST /api/cmd                  장치로 명령     body: {"port": "...", "cmd": "stats"}
-GET  /                         디버그 화면(관제 UI 아님)
+GET  /api/state                       현재 상태 전체(분대원·환경 노드·노드 진단·앵커 관측)
+GET  /api/events?since=&limit=        사건 목록(since: 사건의 n)
+GET  /api/stream                      SSE: "state"(변경 시, 최대 4회/초)·"event"(즉시)
+GET  /api/roster                      분대원 배정
+POST /api/roster                      배정 변경  body: {"soldier_id", "assigned_node_id"(null 가능), "name"(선택)}
+POST /api/env_nodes                   환경 노드 설치 지점  body: {"node_id", "location_name"}
+POST /api/events/<event_id>/ack       지휘관 확인  body: {"by"}(선택), ?source=device|simulation(같은 ID가 여럿일 때)
+POST /api/events/<event_id>/resolve   조치 종료
+POST /api/virtual                     가상 노드 시작/중지 body: {"enabled", "scenario", "nodes", "speed", "loop", "loss_rate"}
+POST /api/cmd                         장치로 명령 body: {"port": "...", "cmd": "stats"}
+GET  /                                디버그 화면(관제 UI 아님)
+
+event_id에 들어가는 ":"는 그대로 써도 되고, "/"가 들어 있으면 퍼센트 인코딩한다.
 
 읽기(GET)는 어느 출처에서나 허용한다. 쓰기(POST)는 같은 출처, Origin 헤더가 없는 클라이언트(curl 등),
 --allow-origin으로 지정한 출처만 받고, Content-Type은 application/json이어야 한다. 그래서 같은 Wi-Fi의
@@ -21,7 +26,7 @@ import queue
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from .virtual import SCENARIOS, VirtualRunner
 
@@ -31,9 +36,8 @@ MAX_BODY_BYTES = 64 * 1024
 
 
 class App:
-    def __init__(self, hub, clock=time.time, allow_origins=()):
+    def __init__(self, hub, allow_origins=()):
         self.hub = hub
-        self.clock = clock
         self.allow_origins = {o.rstrip("/") for o in allow_origins}  # 쓰기를 허용할 다른 출처
         self.readers = {}  # port -> SerialReader
         self.replayer = None
@@ -48,7 +52,7 @@ class App:
         return v.status() if v is not None and v.is_alive() else {"running": False}
 
     def state(self):
-        s = self.hub.snapshot(self.clock(), self.virtual_status())
+        s = self.hub.snapshot(self.virtual_status())
         s["inputs"] = [r.status() for r in self.readers.values()]
         if self.replayer is not None:
             s["replay"] = {"path": self.replayer.path, "done": self.replayer.done,
@@ -87,12 +91,9 @@ class App:
     def _build_virtual(self, cfg):
         nodes = cfg.get("nodes") or None
         if nodes is not None:
-            if not isinstance(nodes, list):
-                raise ValueError("nodes must be a list")
-            try:
-                nodes = [int(n.strip(), 0) if isinstance(n, str) else int(n) for n in nodes]
-            except (TypeError, ValueError, OverflowError):
-                raise ValueError("nodes must be integers (e.g. 2 or \"0x31\")")
+            if not isinstance(nodes, list) or not all(isinstance(n, str) for n in nodes):
+                raise ValueError('nodes must be a list of node IDs (e.g. ["halo_02"])')
+            nodes = [n.strip() for n in nodes if n.strip()]
         try:
             speed = float(cfg.get("speed", 1.0))
             loss_rate = float(cfg.get("loss_rate", 0.0))
@@ -101,14 +102,14 @@ class App:
         if not (math.isfinite(speed) and math.isfinite(loss_rate)):
             raise ValueError("speed and loss_rate must be finite")
         return VirtualRunner(
-            self.hub, clock=self.clock, speed=speed, scenario=cfg.get("scenario", "normal"),
+            self.hub, speed=speed, scenario=cfg.get("scenario", "normal"),
             nodes=nodes, seed=cfg.get("seed"), loop=bool(cfg.get("loop", False)),
             loss_rate=loss_rate)
 
     def ticker(self):
         while not self.stopping:
-            self.hub.tick(self.clock())
-            time.sleep(1.0)
+            self.hub.tick()
+            time.sleep(0.5)
 
 
 def make_handler(app):
@@ -216,6 +217,8 @@ def make_handler(app):
                 return self._json(app.hub.list_events(since, limit))
             if url.path == "/api/scenarios":
                 return self._json(sorted(SCENARIOS))
+            if url.path == "/api/roster":
+                return self._json(app.hub.roster_list())
             if url.path == "/api/stream":
                 return self._sse()
             if url.path in ("/", "/index.html"):
@@ -229,14 +232,32 @@ def make_handler(app):
             body, status, msg = self._body()
             if body is None:
                 return self._json({"error": msg}, status)
-            parts = url.path.strip("/").split("/")
-            if len(parts) == 4 and parts[:2] == ["api", "events"] and parts[3] in ("ack", "resolve"):
+            path = url.path
+            for action in ("ack", "resolve"):
+                suffix = "/" + action
+                if path.startswith("/api/events/") and path.endswith(suffix):
+                    event_id = unquote(path[len("/api/events/"):-len(suffix)])
+                    source = parse_qs(url.query).get("source", [None])[0]
+                    by = body.get("by")
+                    if not event_id or (by is not None and not isinstance(by, str)):
+                        return self._json({"error": "bad event_id or by"}, 400)
+                    ev, err = app.hub.mark_event(event_id, action, by=by, source=source)
+                    if err == "not found":
+                        return self._json({"error": err}, 404)
+                    if err:
+                        return self._json({"error": err}, 409)
+                    return self._json(ev)
+            if path == "/api/roster":
                 try:
-                    eid = int(parts[2])
-                except ValueError:
-                    return self._json({"error": "bad id"}, 400)
-                ev = app.hub.mark_event(eid, parts[3], app.clock(), body.get("by"))
-                return self._json(ev) if ev else self._json({"error": "not found"}, 404)
+                    return self._json(app.hub.set_assignment(
+                        body.get("soldier_id"), body.get("assigned_node_id"), body.get("name")))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
+            if path == "/api/env_nodes":
+                try:
+                    return self._json(app.hub.set_env_location(body.get("node_id"), body.get("location_name")))
+                except ValueError as e:
+                    return self._json({"error": str(e)}, 400)
             if url.path == "/api/virtual":
                 try:
                     return self._json(app.set_virtual(body))

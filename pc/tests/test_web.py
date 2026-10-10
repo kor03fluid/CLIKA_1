@@ -1,15 +1,18 @@
+import http.client
 import json
-import os
-import sys
 import threading
 import unittest
 import urllib.error
+import urllib.parse
 import urllib.request
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from helpers import event, status
 
-from squadlink.hub import Hub  # noqa: E402
-from squadlink.web import App, serve  # noqa: E402
+from squadlink.hub import Hub
+from squadlink.web import App, serve
+
+SOS_ID = "halo_01:boot_a1:sos:1"
+SOS_PATH = "/api/events/" + urllib.parse.quote(SOS_ID, safe="")
 
 
 class WebTest(unittest.TestCase):
@@ -39,30 +42,7 @@ class WebTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code, json.loads(e.read())
 
-    def test_state_and_ack(self):
-        self.hub.ingest({"type": "soldier", "node": 2, "boot": 1, "seq": 1, "sos": True}, "real", "p", 0)
-        s = self.get("/api/state")
-        self.assertIn("2", s["nodes"])
-        ev = self.get("/api/events")[0]
-        status, body = self.post("/api/events/%d/ack" % ev["id"], {"by": "cmd"})
-        self.assertEqual(status, 200)
-        self.assertIsNotNone(body["acked_at"])
-        self.assertIsNone(body["resolved_at"])
-        self.assertEqual(self.post("/api/events/999/ack", {})[0], 404)
-
-    def test_bad_scenario_keeps_running_virtual(self):
-        status, body = self.post("/api/virtual", {"scenario": "normal", "speed": 50})
-        self.assertEqual(status, 200)
-        self.assertTrue(body["running"])
-        for bad in ({"scenario": "nope"}, {"scenario": "normal", "nodes": ["x"]},
-                    {"scenario": "normal", "nodes": "2"}, {"scenario": "normal", "speed": 0},
-                    {"scenario": "normal", "speed": "fast"}, {"scenario": "normal", "loss_rate": 2}):
-            status, body = self.post("/api/virtual", bad)
-            self.assertEqual(status, 400, bad)
-            self.assertTrue(self.app.virtual_status()["running"], bad)
-
     def raw_post(self, path, body, headers):
-        import http.client
         c = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
         c.request("POST", path, body, headers)
         r = c.getresponse()
@@ -71,22 +51,56 @@ class WebTest(unittest.TestCase):
         c.close()
         return r.status, (json.loads(data) if data else None), hdrs
 
+    def test_state_and_event_ack_by_event_id(self):
+        self.hub.ingest(status(seq=1), "serial", "p")
+        self.hub.ingest(event(seq=2), "serial", "p")
+        s = self.get("/api/state")
+        self.assertEqual(s["soldiers"][0]["connection_state"], "connected")
+        self.assertEqual(s["soldiers"][0]["active_event_ids"], [SOS_ID])
+        code, body = self.post(SOS_PATH + "/ack", {"by": "cmd"})
+        self.assertEqual((code, body["event_state"], body["acknowledged_by"]), (200, "acknowledged", "cmd"))
+        # ":"를 인코딩하지 않아도 된다
+        code, body = self.post(f"/api/events/{SOS_ID}/resolve", {})
+        self.assertEqual((code, body["event_state"]), (200, "resolved"))
+        self.assertEqual(self.post("/api/events/nope/ack", {})[0], 404)
+        self.assertEqual(self.post(SOS_PATH + "/ack", {"by": 5})[0], 400)
+
+    def test_roster_and_env_nodes(self):
+        roster = self.get("/api/roster")
+        self.assertEqual([r["assigned_node_id"] for r in roster[:3]], ["halo_01", "halo_02", None])
+        code, body = self.post("/api/roster", {"soldier_id": "soldier_03", "assigned_node_id": "halo_03",
+                                               "name": "3번"})
+        self.assertEqual((code, body["assigned_node_id"]), (200, "halo_03"))
+        self.assertEqual(self.post("/api/roster", {"soldier_id": "soldier_04", "assigned_node_id": "halo_03"})[0], 400)
+        self.assertEqual(self.post("/api/roster", {"soldier_id": "nobody", "assigned_node_id": None})[0], 400)
+        code, body = self.post("/api/env_nodes", {"node_id": "env_01", "location_name": "북쪽 출입구"})
+        self.assertEqual(code, 200)
+        self.assertEqual(self.get("/api/state")["environment_nodes"][0]["location_name"], "북쪽 출입구")
+
+    def test_bad_virtual_config_keeps_running_virtual(self):
+        code, body = self.post("/api/virtual", {"scenario": "normal", "speed": 50})
+        self.assertEqual(code, 200)
+        self.assertTrue(body["running"])
+        for bad in ({"scenario": "nope"}, {"scenario": "normal", "nodes": ["halo_09"]},
+                    {"scenario": "normal", "nodes": [2]}, {"scenario": "normal", "nodes": "halo_02"},
+                    {"scenario": "normal", "speed": 0}, {"scenario": "normal", "speed": "fast"},
+                    {"scenario": "normal", "loss_rate": 2}):
+            code, body = self.post("/api/virtual", bad)
+            self.assertEqual(code, 400, bad)
+            self.assertTrue(self.app.virtual_status()["running"], bad)
+
     def test_write_requests_need_json_and_allowed_origin(self):
-        self.hub.ingest({"type": "soldier", "node": 2, "boot": 1, "seq": 1, "sos": True}, "real", "p", 0)
+        self.hub.ingest(event(seq=1), "serial", "p")
         host = "127.0.0.1:%d" % self.httpd.server_address[1]
         js = {"Content-Type": "application/json"}
-        # 브라우저가 사전 확인 없이 보낼 수 있는 text/plain은 거부
-        self.assertEqual(self.raw_post("/api/events/1/resolve", "{}", {"Content-Type": "text/plain"})[0], 415)
-        # 다른 출처의 웹페이지는 거부
-        status, _, _ = self.raw_post("/api/events/1/resolve", "{}", dict(js, Origin="http://evil.example"))
-        self.assertEqual(status, 403)
-        self.assertIsNone(self.hub.list_events()[0]["resolved_at"])
-        # 같은 출처(디버그 화면)는 허용
-        self.assertEqual(self.raw_post("/api/events/1/ack", "{}", dict(js, Origin="http://" + host))[0], 200)
-        # --allow-origin으로 지정한 출처는 허용하고 CORS 헤더를 돌려준다
+        self.assertEqual(self.raw_post(SOS_PATH + "/resolve", "{}", {"Content-Type": "text/plain"})[0], 415)
+        code, _, _ = self.raw_post(SOS_PATH + "/resolve", "{}", dict(js, Origin="http://evil.example"))
+        self.assertEqual(code, 403)
+        self.assertEqual(self.hub.list_events()[0]["event_state"], "open")
+        self.assertEqual(self.raw_post(SOS_PATH + "/ack", "{}", dict(js, Origin="http://" + host))[0], 200)
         self.app.allow_origins = {"http://localhost:5173"}
-        status, _, hdrs = self.raw_post("/api/events/1/resolve", "{}", dict(js, Origin="http://localhost:5173"))
-        self.assertEqual(status, 200)
+        code, _, hdrs = self.raw_post(SOS_PATH + "/resolve", "{}", dict(js, Origin="http://localhost:5173"))
+        self.assertEqual(code, 200)
         self.assertEqual(hdrs.get("Access-Control-Allow-Origin"), "http://localhost:5173")
 
     def test_preflight_only_for_allowed_origins(self):
@@ -103,8 +117,8 @@ class WebTest(unittest.TestCase):
     def test_malformed_requests_get_error_responses(self):
         js = {"Content-Type": "application/json"}
         self.assertEqual(self.raw_post("/api/virtual", "{}", dict(js, **{"Content-Length": "abc"}))[0], 400)
-        for body in ('{"scenario":"normal","nodes":[1e400]}', '{"scenario":"normal","speed":1e400}',
-                     '{"scenario":"normal","speed":Infinity}', '[1,2]', '{bad'):
+        for body in ('{"scenario":"normal","speed":1e400}', '{"scenario":"normal","speed":Infinity}',
+                     '[1,2]', '{bad'):
             self.assertEqual(self.raw_post("/api/virtual", body, js)[0], 400, body)
         self.assertFalse(self.app.virtual_status()["running"])
 
@@ -116,13 +130,13 @@ class WebTest(unittest.TestCase):
 
     def test_state_json_is_shared_until_hub_changes(self):
         a = self.app.state_json()
-        self.assertIs(self.app.state_json(), a)  # 같은 버전·짧은 시간 안: 같은 문자열 재사용
-        self.hub.ingest({"type": "soldier", "node": 1, "boot": 1, "seq": 1}, "real", "p", 0)
+        self.assertIs(self.app.state_json(), a)
+        self.hub.ingest(status(seq=1), "serial", "p")
         b = self.app.state_json()
         self.assertIsNot(b, a)
-        self.assertIn('"1"', b)
+        self.assertIn('"halo_01"', b)
         version, built, text = self.app._state_cache
-        self.app._state_cache = (version, built - 10, text)  # 오래된 캐시는 다시 만든다(age_s 갱신)
+        self.app._state_cache = (version, built - 10, text)
         self.assertIsNot(self.app.state_json(), text)
 
     def test_stream_sends_initial_state(self):
@@ -130,7 +144,7 @@ class WebTest(unittest.TestCase):
             self.assertEqual(r.readline().decode().strip(), "event: state")
             data = r.readline().decode()
             self.assertTrue(data.startswith("data: "))
-            self.assertIn("nodes", json.loads(data[6:]))
+            self.assertEqual(len(json.loads(data[6:])["soldiers"]), 8)
 
 
 if __name__ == "__main__":

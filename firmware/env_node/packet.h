@@ -1,89 +1,96 @@
 #pragma once
-// 공통 패킷 초안. 형식은 팀원 B(패킷 정의)와 확정하며 A·C가 같은 정의를 사용한다.
-// BLE 레거시 광고 31B 중 Flags(3B)와 제조사 데이터 머리(길이·타입·회사 ID 4B)를 빼면
-// 페이로드는 최대 24B. 모든 다바이트 필드는 little-endian.
+// BLE 무선 패킷 초안 v2. 바이트 배치는 팀원 B가 확정한다(공통 규격 v1은 PC로 가는 JSON만 정함).
+// 게이트웨이는 이 바이너리를 docs/data_spec_v1.md의 JSON으로 바꾼다. 변환표는 README 참고.
+// BLE 레거시 광고 31B 중 Flags(3B)와 제조사 데이터 머리(4B)를 빼면 페이로드 최대 24B. little-endian.
 #include <stdint.h>
 
 #define PKT_COMPANY_ID  0xFFFF  // Bluetooth SIG 시험용 ID. 제품용 ID 아님
-#define PKT_VERSION     1
+#define PKT_VERSION     2
 #define PKT_MAX_PAYLOAD 24
 
-enum PacketType : uint8_t {
-  PKT_SOLDIER_STATUS = 0x1,
-  PKT_SOLDIER_POS    = 0x2,
-  PKT_ENV            = 0x3,
-  PKT_ANCHOR_REPORT  = 0x4,
+enum PacketType : uint8_t {   // JSON packet_type
+  PKT_SOLDIER_STATUS = 0x1,   // soldier_status (A·B)
+  PKT_GPS            = 0x2,   // gps (A·B)
+  PKT_ENVIRONMENT    = 0x3,   // environment
+  PKT_ANCHOR_OBS     = 0x4,   // anchor_observation
+  PKT_EVENT          = 0x5,   // event
 };
 
 // PktHeader.flags
-#define PKT_FLAG_RELAYED 0x01  // 중계기가 재방송함. 이 패킷의 RSSI는 위치 추정에 쓰지 않음
-#define PKT_FLAG_VIRTUAL 0x02  // 가상(시험) 데이터
-#define PKT_FLAG_EVENT   0x04  // 이벤트로 인한 즉시 송신
+#define PKT_FLAG_RELAYED    0x01  // 중계기가 재방송 → transport.route "relay". 이 RSSI는 위치 추정에 쓰지 않음
+#define PKT_FLAG_SIMULATION 0x02  // source "simulation" (없으면 "device")
+#define PKT_FLAG_EVENT      0x04  // 즉시 송신(반복 광고)
 
-// 원본 식별·중복 제거 키: node_id + boot_id + seq. 반복 광고는 같은 seq를 쓴다.
+// 원본 식별·중복 제거: source + node_id + boot_id + seq. 반복 광고·중계는 같은 머리를 그대로 쓴다.
 struct __attribute__((packed)) PktHeader {
-  uint8_t  ver_type;  // 상위 4bit 버전, 하위 4bit PacketType
+  uint8_t  ver_type;   // 상위 4bit 버전, 하위 4bit PacketType
   uint8_t  flags;
-  uint8_t  node_id;
-  uint16_t boot_id;
-  uint16_t seq;
+  uint8_t  node_id;    // 숫자 ID → 문자열 node_id (README 변환표)
+  uint16_t boot_id;    // 부팅마다 새 값. JSON boot_id = "boot_%04x"
+  uint16_t seq;        // 부팅 내 순번(모든 종류 공통). 65535에 이르면 노드가 새 boot_id로 넘어간다
+  uint32_t uptime_ms;  // 패킷 생성 시 부팅 후 경과 ms → JSON uptime_ms
 };
 
 inline uint8_t pktVersion(const PktHeader& h) { return h.ver_type >> 4; }
 inline uint8_t pktType(const PktHeader& h) { return h.ver_type & 0x0F; }
 
-// ----- 환경 패킷 (PKT_ENV) -----
-// valid: 센서 설치·유효
-#define ENV_OK_DHT    0x01
-#define ENV_OK_LIGHT  0x02
-#define ENV_HAS_SOUND 0x04
-#define ENV_HAS_FLAME 0x08
-#define ENV_HAS_SHOCK 0x10
-#define ENV_HAS_REED  0x20
-// events: 직전 환경 패킷 이후 발생(래치)
-#define ENV_EV_SOUND 0x01  // 큰 소리. 총성 판별 아님
-#define ENV_EV_FLAME 0x02  // 광학 반응. 화재 확정 아님
-#define ENV_EV_SHOCK 0x04  // 설치물 자체 충격
-#define ENV_EV_REED  0x08  // 덮개 열림·닫힘 변화
-#define ENV_EV_HEAT  0x10  // 열 노출 주의 시작
-// state: 송신 시점 상태
-#define ENV_ST_HEAT      0x01
-#define ENV_ST_FLAME     0x02
-#define ENV_ST_REED_OPEN 0x04
+// 센서 상태 2bit 값 (JSON sensor_status)
+enum SensorState : uint8_t { SS_OK = 0, SS_UNAVAILABLE = 1, SS_NOT_IMPLEMENTED = 2, SS_DISABLED = 3 };
+// 선택 boolean 2bit 값
+enum TriBool : uint8_t { TB_FALSE = 0, TB_TRUE = 1, TB_OMIT = 2, TB_NULL = 3 };
 
-#define ENV_TEMP_INVALID  INT16_MIN
-#define ENV_BYTE_INVALID  0xFF
+// ----- 환경 (PKT_ENVIRONMENT) -----
+// sensor_status 2bit 위치
+#define ENV_SS_DHT11 0
+#define ENV_SS_LIGHT 2
+#define ENV_SS_SOUND 4
+#define ENV_SS_FLAME 6
+#define ENV_SS_SHOCK 8
+#define ENV_SS_REED  10
+// detected 2bit 위치 (TB_OMIT이면 JSON에서 필드와 sensor_status 키를 모두 뺀다)
+#define ENV_DT_SOUND 0
+#define ENV_DT_FLAME 2
+#define ENV_DT_SHOCK 4
+#define ENV_DT_REED_CLOSED 6
 
-struct __attribute__((packed)) PktEnv {
+#define ENV_TEMP_NULL  INT16_MIN
+#define ENV_HUM_NULL   0xFF
+#define ENV_LIGHT_NULL 0xFFFF
+
+struct __attribute__((packed)) PktEnvironment {
   PktHeader h;
-  int16_t temp_c10;   // 공기 온도 ×10. 체온 대체 불가
-  uint8_t humidity;   // %RH
-  uint8_t light_pct;  // 상대 밝기 0~100. 보정 전이라 lux 아님
-  uint8_t valid;
-  uint8_t events;
-  uint8_t state;
+  int16_t  air_temp_c10;   // 공기 온도 ×10 → air_temperature_c. 체온 아님
+  uint8_t  humidity_pct;   // → humidity_pct
+  uint16_t light_raw;      // ADC 원시값(12bit) → light_raw. lux 아님
+  uint16_t heartbeat_s;    // 선언한 정상 보고 주기(초) → heartbeat_interval_ms = ×1000
+  uint16_t sensor_status;  // 2bit × 6 (ENV_SS_*)
+  uint8_t  detected;       // 2bit × 4 (ENV_DT_*)
 };
 
-// ----- 앵커 관측 보고 (PKT_ANCHOR_REPORT) -----
-// 병사 노드의 직접 방송(중계 아님)을 이 앵커가 수신한 결과.
-// 수신 시각은 시계 동기가 없으므로 송신 시점 기준 경과 시간으로 보낸다.
-struct __attribute__((packed)) AnchorEntry {
-  uint8_t  soldier_id;
-  uint16_t last_seq;   // 마지막으로 직접 수신한 패킷 seq
-  int8_t   rssi_last;  // dBm
-  int8_t   rssi_avg;   // dBm, EMA
-  uint8_t  samples;    // 직전 보고 이후 수신 횟수(255 포화)
-  uint16_t age_ds;     // 마지막 수신 후 경과, 0.1초 단위(최대 6553.5초). ANCHOR_STALE_MS보다 길어야 함
+// ----- 사건 (PKT_EVENT) -----
+enum EventType : uint8_t { EV_SOS = 1, EV_IMPACT = 2, EV_PROLONGED_STILL = 3, EV_HEAT_EXPOSURE = 4 };
+enum Mode : uint8_t { MODE_NORMAL = 0, MODE_COVERT = 1 };
+
+struct __attribute__((packed)) PktEvent {
+  PktHeader h;
+  uint8_t  event_type;  // EventType
+  uint8_t  mode;        // Mode
+  uint16_t event_no;    // JSON event_id = "<node_id>:<boot_id>:<event_type>:<event_no>"
 };
 
-#define ANCHOR_ENTRIES_PER_PKT 2
-
-struct __attribute__((packed)) PktAnchorReport {
-  PktHeader   h;
-  uint8_t     count;
-  AnchorEntry e[ANCHOR_ENTRIES_PER_PKT];
+// ----- 앵커 관측 (PKT_ANCHOR_OBS) -----
+// 병사 노드의 직접 방송(중계·가상 아님)을 이 앵커가 받은 결과. 패킷 하나에 관측 하나
+// (JSON에서 관측마다 앵커의 seq가 달라야 중복 제거에 걸리지 않는다).
+struct __attribute__((packed)) PktAnchorObs {
+  PktHeader h;
+  uint8_t  observed_node;  // → observed_node_id
+  uint16_t observed_boot;  // → observed_boot_id
+  uint16_t observed_seq;   // → observed_seq
+  int8_t   rssi_dbm;       // 그 패킷의 직접 수신 RSSI → rssi_dbm
+  uint16_t age_ms;         // 관측 후 보고 생성까지 → observation_age_ms
 };
 
-static_assert(sizeof(PktHeader) == 7, "header size");
-static_assert(sizeof(PktEnv) <= PKT_MAX_PAYLOAD, "env packet too large");
-static_assert(sizeof(PktAnchorReport) <= PKT_MAX_PAYLOAD, "anchor packet too large");  // 7+1+8×2 = 24B
+static_assert(sizeof(PktHeader) == 11, "header size");
+static_assert(sizeof(PktEnvironment) <= PKT_MAX_PAYLOAD, "environment packet too large");
+static_assert(sizeof(PktEvent) <= PKT_MAX_PAYLOAD, "event packet too large");
+static_assert(sizeof(PktAnchorObs) <= PKT_MAX_PAYLOAD, "anchor packet too large");

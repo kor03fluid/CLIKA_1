@@ -1,6 +1,8 @@
 """입력 경로: USB 시리얼(게이트웨이·환경 노드)과 로그 재생.
 
-입력 형식은 한 줄에 JSON 객체 하나. JSON이 아닌 줄(ESP32 부팅 메시지 등)은 로그에만 남긴다.
+시리얼 입력은 UTF-8 NDJSON(규격 v1): 한 줄에 JSON 객체 하나.
+- "#"으로 시작하는 줄은 장치 진단(데이터 아님). "# {...}"이면 JSON으로 읽어 진단으로 보관한다.
+- JSON이 아닌 줄(ESP32 부팅 메시지 등)은 로그에만 남긴다.
 """
 
 import json
@@ -12,7 +14,7 @@ import traceback
 
 
 def _reject_constant(name):
-    # NaN·Infinity는 표준 JSON이 아니어서 그대로 내보내면 브라우저 JSON.parse가 실패한다
+    # NaN·Infinity는 규격 위반이고, 그대로 내보내면 브라우저 JSON.parse가 실패한다
     raise ValueError("non-standard JSON constant: " + name)
 
 
@@ -27,18 +29,27 @@ def parse_line(line):
     return obj if isinstance(obj, dict) else None
 
 
+def classify_line(line):
+    """("data", obj) | ("diag", obj 또는 None) | ("text", None)."""
+    line = line.strip()
+    if line.startswith("#"):
+        return "diag", parse_line(line[1:])
+    obj = parse_line(line)
+    return ("data", obj) if obj is not None else ("text", None)
+
+
 class SerialReader(threading.Thread):
     """시리얼 포트 하나를 읽는다. 끊기면 2초마다 다시 연다(USB 재연결 대비)."""
 
-    def __init__(self, port, baud, hub, logger=None, clock=time.time):
+    def __init__(self, port, baud, hub, logger=None):
         super().__init__(daemon=True, name="serial:" + port)
         self.port = port
         self.baud = baud
         self.hub = hub
         self.logger = logger
-        self.clock = clock
         self.connected = False
         self.lines = 0
+        self.text_lines = 0
         self.error = None
         self._ser = None
         self._stop_evt = threading.Event()
@@ -85,14 +96,16 @@ class SerialReader(threading.Thread):
     def _on_line(self, line):
         """한 줄 처리. 여기서 난 예외는 포트를 닫지 않고 기록만 한다."""
         self.lines += 1
-        now = self.clock()
         try:
-            obj = parse_line(line)
-            if obj is None:
+            kind, obj = classify_line(line)
+            if kind == "data":
+                self.hub.ingest(obj, "serial", self.port)
+            elif kind == "diag":
+                self.hub.ingest_diag(obj if obj is not None else {"text": line}, "serial", self.port)
+            else:
+                self.text_lines += 1
                 if self.logger:
-                    self.logger.text(now, "real", self.port, line)
-                return
-            self.hub.ingest(obj, "real", self.port, now)
+                    self.logger.text(time.time(), "serial", self.port, line)
         except Exception:
             print(f"[serial {self.port}] 줄 처리 실패: {line[:120]}", file=sys.stderr, flush=True)
             traceback.print_exc()
@@ -111,34 +124,47 @@ class SerialReader(threading.Thread):
 
     def status(self):
         return {"port": self.port, "baud": self.baud, "connected": self.connected,
-                "lines": self.lines, "error": self.error}
+                "lines": self.lines, "text_lines": self.text_lines, "error": self.error}
 
     def stop(self):
         self._stop_evt.set()
 
 
+# 재생할 서버 로그 결과: 받아들였던 줄과 중복·지연 패킷. 가려진(shadowed)·무효 줄은 뺀다.
+REPLAY_RESULTS = ("ok", "late", "stale_boot", "dup")
+
+
 def iter_log_records(path):
-    """rx.jsonl(이 서버의 로그) 또는 JSON 줄 파일에서 (원래 수신 시각 또는 None, 객체)를 낸다."""
+    """rx.jsonl(서버 로그) 또는 NDJSON 파일에서 (원래 수신 시각 또는 None, 종류, 객체)를 낸다.
+
+    종류: "data" | "diag".
+    """
     with open(path, encoding="utf-8") as f:
         for line in f:
-            obj = parse_line(line)
-            if obj is None:
+            kind, obj = classify_line(line)
+            if kind == "diag" and obj is not None:
+                yield None, "diag", obj
+                continue
+            if kind != "data":
                 continue
             if "rx_ts" in obj and "result" in obj:  # 서버 로그 형식
-                # 받아들였던 줄(+중복·이전 부팅 패킷)만 다시 흘린다. 다른 출처에 가려졌던 줄(shadowed)은 뺀다.
-                if (obj["result"] in ("ok", "late", "meta", "dup", "stale_boot")
-                        and isinstance(obj.get("obj"), dict)):
-                    ts = obj["rx_ts"]
-                    ok_ts = isinstance(ts, (int, float)) and not isinstance(ts, bool)
-                    yield (ts if ok_ts else None), obj["obj"]
+                ts = obj["rx_ts"]
+                ts = ts if isinstance(ts, (int, float)) and not isinstance(ts, bool) else None
+                if obj["result"] in REPLAY_RESULTS and isinstance(obj.get("obj"), dict):
+                    yield ts, "data", obj["obj"]
+                elif obj["result"] == "diag" and isinstance(obj.get("diag"), dict):
+                    yield ts, "diag", obj["diag"]
             else:
-                yield None, obj
+                yield None, "data", obj
 
 
 class Replayer(threading.Thread):
-    """기록 로그를 다시 흘려보낸다. source="replay"로 표시되어 실시간 데이터와 구분된다."""
+    """기록 로그를 다시 흘려보낸다. input="replay"로 표시되어 실시간 수신과 구분된다.
 
-    def __init__(self, path, hub, speed=1.0, gap_s=1.0, clock=time.time):
+    패킷의 source(device/simulation)는 그대로 유지한다(규격: 출처 유지).
+    """
+
+    def __init__(self, path, hub, speed=1.0, gap_s=1.0):
         if not (speed > 0 and math.isfinite(speed)):
             raise ValueError("replay speed must be a finite number > 0")
         super().__init__(daemon=True, name="replay")
@@ -146,7 +172,6 @@ class Replayer(threading.Thread):
         self.hub = hub
         self.speed = speed
         self.gap_s = gap_s  # 시각 정보가 없는 줄 사이 간격
-        self.clock = clock
         self.done = False
         self.error = None
         self._stop_evt = threading.Event()
@@ -154,7 +179,7 @@ class Replayer(threading.Thread):
     def run(self):
         prev_ts = None
         try:
-            for ts, obj in iter_log_records(self.path):
+            for ts, kind, obj in iter_log_records(self.path):
                 if self._stop_evt.is_set():
                     break
                 if ts is not None and prev_ts is not None:
@@ -166,7 +191,10 @@ class Replayer(threading.Thread):
                 prev_ts = ts if ts is not None else prev_ts
                 if self._stop_evt.wait(min(wait, 60.0)):
                     break
-                self.hub.ingest(obj, "replay", "replay", self.clock())
+                if kind == "diag":
+                    self.hub.ingest_diag(obj, "replay", "replay")
+                else:
+                    self.hub.ingest(obj, "replay", "replay")
         except Exception as e:  # 파일 열기·읽기 실패
             self.error = f"{type(e).__name__}: {e}"
             print(f"[replay] {self.error}", file=sys.stderr, flush=True)

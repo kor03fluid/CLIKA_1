@@ -1,5 +1,6 @@
 #pragma once
-// 노드 식별: boot_id(NVS 부팅 카운터)와 패킷별 seq.
+// 노드 식별: boot_id와 패킷별 seq·uptime_ms.
+#include <Arduino.h>
 #include "packet.h"
 
 void nodeBegin();

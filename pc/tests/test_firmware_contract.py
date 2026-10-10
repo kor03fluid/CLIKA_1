@@ -95,7 +95,7 @@ class FirmwareJsonOutputTest(unittest.TestCase):
 
 @unittest.skipIf(CXX is None, "C++ 컴파일러 없음")
 class FirmwareNodeHeaderTest(unittest.TestCase):
-    """node.cpp: seq는 출처마다 따로 세고, 65535에 이르면 새 boot_id로 넘어간다."""
+    """node.cpp: seq는 출처·종류를 통틀어 부팅 내 하나이고, 65535에 이르면 새 boot_id로 넘어간다."""
 
     @classmethod
     def setUpClass(cls):
@@ -112,14 +112,15 @@ class FirmwareNodeHeaderTest(unittest.TestCase):
     def tearDownClass(cls):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
-    def test_seq_per_source(self):
+    def test_seq_shared_across_sources(self):
+        # 규격 4장: 같은 부팅에서 seq를 재사용하지 않는다(실측·가상이 섞여도 한 번호열)
         mixed = self.rows[:7]
         self.assertEqual({b for _, b, _ in mixed}, {"1a2b"})
-        self.assertEqual([q for s, _, q in mixed if s == "device"], [1, 2, 3, 4])
-        self.assertEqual([q for s, _, q in mixed if s == "simulation"], [1, 2, 3])
+        self.assertEqual([q for _, _, q in mixed], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual([s for s, _, _ in mixed].count("simulation"), 3)
 
     def test_wrap_starts_new_boot(self):
-        self.assertEqual(self.rows[7:], [("device", "1a2c", 1), ("simulation", "1a2c", 1),
+        self.assertEqual(self.rows[7:], [("device", "1a2c", 1), ("simulation", "1a2c", 2),
                                          ("device", "1a2d", 1)])
 
     def test_server_sees_no_missing_while_mixed(self):
@@ -129,8 +130,9 @@ class FirmwareNodeHeaderTest(unittest.TestCase):
             clock.t += 1
             self.assertEqual(hub.ingest(environment(seq=seq, boot="boot_" + boot, source=src),
                                         "serial", "COM7"), "ok")
-        streams = hub.snapshot()["nodes"]["env_01"]["streams"]
-        self.assertEqual({k: v["missing"] for k, v in streams.items()}, {"device": 0, "simulation": 0})
+        node = hub.snapshot()["nodes"]["env_01"]
+        self.assertEqual(set(node["streams"]), {"device", "simulation"})
+        self.assertEqual(node["counters"]["missing"], 0)  # 출처별로는 비어 보이지만 노드·부팅 단위로는 누락 없음
 
 
 @unittest.skipIf(CXX is None, "C++ 컴파일러 없음")

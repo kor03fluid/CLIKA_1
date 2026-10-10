@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""SQUAD LINK PC 데이터 서버 (팀원 C).
+"""SQUAD LINK C 시험 서버 (팀원 C). 공식 PC 관제는 팀장 쪽 서버(node server.mjs, 8080)이고,
+이것은 환경 노드·앵커 시험과 측정용 도구다. 함께 켤 수 있게 기본 포트는 8090.
 
 예)
   python server.py --serial COM5                    # 게이트웨이 USB
@@ -57,7 +58,7 @@ def parse_args(argv=None):
     p.add_argument("--replay", metavar="FILE", help="기록 로그(rx.jsonl) 재생")
     p.add_argument("--replay-speed", type=positive_float, default=1.0)
     p.add_argument("--host", default="0.0.0.0", help="휴대폰 접속을 위해 기본은 모든 인터페이스")
-    p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--port", type=int, default=8090, help="기본 8090(팀장 관제 서버 8080과 겹치지 않게)")
     p.add_argument("--log-dir", default="logs")
     p.add_argument("--roster", metavar="FILE",
                    help='분대원 배정 JSON: {"soldiers":[{"soldier_id","assigned_node_id","name"}],'

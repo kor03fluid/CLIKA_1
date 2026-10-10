@@ -4,8 +4,10 @@
 서버 판정(result)은 전체 집계에만 쓰고, 노드별 수치는 패킷의 source·node_id·boot_id·seq로 다시 센다.
 원시 NDJSON 줄은 서버와 같은 검사기(schema.validate)를 통과한 것만 센다.
 
-- 노드별: 고유 패킷 수, 중복, 누락(boot마다 받은 seq 범위 안의 빈 번호), 손실률,
-  분당 송신(boot마다 처음·마지막으로 받은 패킷 사이의 seq 증가 / 장치 uptime 증가)
+- 노드별(노드마다 한 줄, 출처별 패킷 수 함께): 고유 패킷 수, 중복, 누락, 손실률, 분당 송신.
+  seq는 규격상 부팅 내 모든 패킷 공통이라 누락·송신량은 노드·boot 단위로 센다. vtemp 시험처럼 실측·가상이 한 boot의
+  번호를 나눠 써도 가짜 누락이 생기지 않는다. 분당 송신은 boot마다 처음·마지막으로 받은 패킷 사이의 seq 증가 /
+  장치 uptime 증가다.
 - 경로별: 어떤 gateway_id로 몇 개가 들어왔는지. 노드가 USB로 자기 송신분을 함께 내면(환경 노드)
   그것을 보낸 목록으로 보고 다른 게이트웨이의 BLE 수신률을 계산한다.
 - 환경 노드 송신량: "stats" 진단 줄 사이의 차이(같은 boot). 구간 양 끝의 tx_mode·anchor_enabled가 같아야
@@ -128,7 +130,7 @@ def summarize(records):
         "period": {"start": _iso_kst(t0), "end": _iso_kst(t1),
                    "seconds": round(t1 - t0, 1) if t0 is not None else None},
         "results": dict(results),
-        "nodes": [_node_row(node_id, source, n) for (node_id, source), n in sorted(nodes.items())],
+        "nodes": _node_rows(nodes),
         "paths": _path_rows(nodes),
         "tx_intervals": _tx_intervals(stats_lines),
         "anchors": [_anchor_row(k, a) for k, a in sorted(anchors.items(), key=lambda kv: tuple(map(str, kv[0])))],
@@ -137,20 +139,40 @@ def summarize(records):
     }
 
 
-def _node_row(node_id, source, n):
-    packets = sum(len(s) for s in n.seen.values())
-    missing = sum(max(s) - min(s) + 1 - len(s) for s in n.seen.values())
-    # 같은 boot 안에서 seq와 uptime은 함께 늘어나므로, 처음·마지막 패킷 사이 seq 증가가 그동안 보낸 패킷 수다
-    sent_between = sum(max(s) - min(s) for s in n.seen.values())
-    span_ms = sum(hi - lo for lo, hi in n.uptime.values())
-    return {
-        "node_id": node_id, "source": source, "packets": packets, "copies": n.copies,
-        "dup": n.copies - packets, "missing": missing,
-        "loss_pct": round(100.0 * missing / (packets + missing), 2) if packets else None,
-        "boots": len(n.seen), "per_min": round(sent_between * 60000.0 / span_ms, 2) if span_ms > 0 else None,
-        "types": dict(sorted(n.types.items())),
-        "routes": {f"{gw}/{route}": c for (gw, route), c in sorted(n.routes.items(), key=lambda kv: str(kv[0]))},
-    }
+def _node_rows(nodes):
+    """노드마다 한 줄. 출처별로 모은 것을 노드·boot 단위로 합친다(seq는 부팅 내 모든 패킷 공통)."""
+    by_node = defaultdict(list)
+    for (node_id, source), n in nodes.items():
+        by_node[node_id].append((source, n))
+    rows = []
+    for node_id, parts in sorted(by_node.items()):
+        seen, uptime = defaultdict(set), {}
+        types, routes, sources = Counter(), Counter(), {}
+        copies = 0
+        for source, n in sorted(parts, key=lambda p: str(p[0])):
+            sources[source] = sum(len(s) for s in n.seen.values())
+            copies += n.copies
+            types.update(n.types)
+            routes.update(n.routes)
+            for boot, s in n.seen.items():
+                seen[boot] |= s
+            for boot, (lo, hi) in n.uptime.items():
+                cur = uptime.setdefault(boot, [lo, hi])
+                cur[0], cur[1] = min(cur[0], lo), max(cur[1], hi)
+        packets = sum(len(s) for s in seen.values())
+        missing = sum(max(s) - min(s) + 1 - len(s) for s in seen.values())
+        # 같은 boot 안에서 seq와 uptime은 함께 늘어나므로, 처음·마지막 패킷 사이 seq 증가가 그동안 보낸 패킷 수다
+        sent_between = sum(max(s) - min(s) for s in seen.values())
+        span_ms = sum(hi - lo for lo, hi in uptime.values())
+        rows.append({
+            "node_id": node_id, "sources": sources, "packets": packets, "copies": copies,
+            "dup": copies - packets, "missing": missing,
+            "loss_pct": round(100.0 * missing / (packets + missing), 2) if packets else None,
+            "boots": len(seen), "per_min": round(sent_between * 60000.0 / span_ms, 2) if span_ms > 0 else None,
+            "types": dict(sorted(types.items())),
+            "routes": {f"{gw}/{route}": c for (gw, route), c in sorted(routes.items(), key=lambda kv: str(kv[0]))},
+        })
+    return rows
 
 
 def _path_rows(nodes):
@@ -242,11 +264,12 @@ def format_text(rep):
     p, r = rep["period"], rep["results"]
     lines = [f"기간(KST): {p['start'] or '-'} ~ {p['end'] or '-'} ({p['seconds'] if p['seconds'] is not None else '-'}초)",
              "줄 판정: " + (" · ".join(f"{k} {v}" for k, v in sorted(r.items())) or "없음"), ""]
-    lines.append("[노드별 수신] 누락 = boot마다 받은 seq 범위 안의 빈 번호, 분당 = 보낸 패킷(seq)/장치 uptime")
+    lines.append("[노드별 수신] 누락 = boot마다 받은 seq 범위 안의 빈 번호(출처 무관), 분당 = 보낸 패킷(seq)/장치 uptime")
     lines.append(_table(
-        ["node_id", "source", "패킷", "중복", "누락", "손실%", "boot", "분당", "종류"],
-        [[n["node_id"], n["source"], n["packets"], n["dup"], n["missing"], n["loss_pct"], n["boots"],
-          n["per_min"], ", ".join(f"{k} {v}" for k, v in n["types"].items())] for n in rep["nodes"]]))
+        ["node_id", "출처별 패킷", "패킷", "중복", "누락", "손실%", "boot", "분당", "종류"],
+        [[n["node_id"], ", ".join(f"{k} {v}" for k, v in n["sources"].items()), n["packets"], n["dup"],
+          n["missing"], n["loss_pct"], n["boots"], n["per_min"],
+          ", ".join(f"{k} {v}" for k, v in n["types"].items())] for n in rep["nodes"]]))
     lines += ["", "[경로별 수신] 수신률 = 노드가 USB로 낸 송신분 중 그 게이트웨이가 받은 비율"]
     lines.append(_table(["node_id", "source", "gateway_id", "받음", "송신분", "수신률%"],
                         [[x["node_id"], x["source"], x["gateway_id"], x["packets"], x["sent"], x["received_pct"]]

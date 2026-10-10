@@ -27,7 +27,7 @@ struct __attribute__((packed)) PktHeader {
   uint8_t  flags;
   uint8_t  node_id;    // 숫자 ID → 문자열 node_id (README 변환표)
   uint16_t boot_id;    // 부팅마다 새 값. JSON boot_id = "boot_%04x"
-  uint16_t seq;        // 부팅 내 순번(모든 종류 공통, 출처 device/simulation마다 따로). 65535에 이르면 새 boot_id
+  uint16_t seq;        // 부팅 내 순번(모든 종류·출처 공통, 재사용 없음). 65535에 이르면 새 boot_id
   uint32_t uptime_ms;  // 패킷 생성 시 부팅 후 경과 ms → JSON uptime_ms
 };
 

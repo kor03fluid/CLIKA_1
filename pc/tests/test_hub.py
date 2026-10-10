@@ -254,7 +254,7 @@ class SourceTest(unittest.TestCase):
             self.assertEqual(h.ingest(status(seq=seq, source="simulation"), "sim", "sim"), "shadowed")
         c.t += 33  # 실측 두절 → 가상이 이어받는다
         self.assertEqual(h.ingest(status(seq=6, source="simulation"), "sim", "sim"), "ok")
-        self.assertEqual(h.snapshot()["nodes"]["halo_01"]["streams"]["simulation"]["missing"], 0)
+        self.assertEqual(h.snapshot()["nodes"]["halo_01"]["counters"]["missing"], 0)
 
     def test_old_device_copy_does_not_switch_back(self):
         # 가상이 이어받은 뒤 실측의 지난 사본(중복·지연)이 와도 표시 상태를 지우지 않는다
@@ -287,6 +287,16 @@ class SourceTest(unittest.TestCase):
         self.assertEqual(h.ingest(environment(seq=2, source="device"), "serial", "COM5"), "ok")
         self.assertEqual(h.ingest(environment(seq=2, source="simulation", temp=41.0), "serial", "COM5"), "ok")
         self.assertEqual(h.snapshot()["environment_nodes"][0]["source"], "simulation")
+
+    def test_missing_is_counted_per_node_boot_across_sources(self):
+        # 규격: seq는 부팅 내 모든 패킷 공통. vtemp로 출처가 섞여도 실제 빈 번호만 누락이다
+        h, c = new_hub()
+        for seq, src in ((1, "device"), (2, "device"), (3, "simulation"), (5, "device"), (6, "simulation")):
+            c.t += 1
+            self.assertEqual(h.ingest(environment(seq=seq, source=src), "serial", "COM7"), "ok")
+        self.assertEqual(h.snapshot()["nodes"]["env_01"]["counters"]["missing"], 1)  # seq 4
+        h.ingest(environment(seq=4, source="simulation"), "serial", "COM7")  # 늦게 온 4
+        self.assertEqual(h.snapshot()["nodes"]["env_01"]["counters"]["missing"], 0)
 
     def test_invalid_packet_notifies_screen(self):
         h, c = new_hub()

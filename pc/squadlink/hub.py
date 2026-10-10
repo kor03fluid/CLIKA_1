@@ -50,7 +50,7 @@ DEFAULT_ENV_NODES = [{"node_id": "env_01", "location_name": None}]
 
 
 class SeqTracker:
-    """(source, node, boot) 하나의 seq 중복·누락 추적."""
+    """seq 중복·순서·누락 추적. 중복·순서는 (source, node, boot)마다, 누락은 (node, boot)마다 하나씩 쓴다."""
 
     def __init__(self):
         self.seen = set()
@@ -96,8 +96,6 @@ class Stream:
         self.last_new = None
         self.reboots = 0
 
-    def missing(self):
-        return sum(t.missing_total for t in self.trackers.values())
 
 
 class NodeState:
@@ -108,6 +106,7 @@ class NodeState:
         self.active = None        # 표시 중인 출처
         self.active_port = None
         self.port_source = {}     # 입력 포트 -> 그 포트로 이 노드의 마지막 패킷이 실어 온 출처
+        self.gaps = OrderedDict()  # boot_id -> SeqTracker. 누락은 출처와 무관하게 노드·boot 단위로 센다
         self.active_input = None
         self.latest = {}          # packet_type -> {"packet", "received_at", "input", "port"}
         self.last_fix = None      # 마지막 유효 GPS
@@ -118,6 +117,9 @@ class NodeState:
         self.lost_count = 0
         self.c = {"rx": 0, "dup": 0, "late": 0, "stale_boot": 0, "shadowed": 0, "relayed": 0,
                   "source_changes": 0}
+
+    def missing(self):
+        return sum(t.missing_total for t in self.gaps.values())
 
     def timeout_ms(self):
         hb = self.heartbeat_interval_ms
@@ -385,7 +387,10 @@ class Hub:
             last = stream.boot_last.get(boot)
             if last is not None and (now - last <= n.window_s() or n.stream_alive(stream, now)):
                 # 이전 부팅의 지연 패킷: 중복만 거르고 상태는 바꾸지 않는다
-                return "stale_boot" if stream.trackers[boot].add(seq) else "dup"
+                if not stream.trackers[boot].add(seq):
+                    return "dup"
+                self._gap(n, boot, seq)
+                return "stale_boot"
             if stream.boot_id is not None:
                 stream.reboots += 1
             stream.boot_id = boot
@@ -401,7 +406,18 @@ class Hub:
         if r == "new":
             stream.boot_last[boot] = now
             stream.last_new = now
+        self._gap(n, boot, seq)
         return r
+
+    def _gap(self, n, boot, seq):
+        """누락(빈 seq)은 노드·boot 단위로 센다. 규격상 seq는 부팅 내 모든 패킷 공통이라, 환경 노드 vtemp 시험처럼
+        한 boot에서 실측·가상이 번호를 나눠 쓰면 출처별로는 빈 번호가 생기지만 실제 누락이 아니다."""
+        t = n.gaps.get(boot)
+        if t is None:
+            t = n.gaps[boot] = SeqTracker()
+            while len(n.gaps) > 2 * MAX_BOOTS_KEPT:
+                n.gaps.popitem(last=False)
+        t.add(seq)
 
     def _anchor(self, pkt, input_, now, wall):
         p = pkt["payload"]
@@ -582,9 +598,9 @@ class Hub:
             "node_id": n.node_id, "kinds": sorted(n.kinds), "active_source": n.active,
             "input": n.active_input, "connection_state": n.state, "last_seen_at": n.last_seen_at,
             "heartbeat_interval_ms": n.heartbeat_interval_ms, "timeout_ms": n.timeout_ms(),
-            "counters": dict(n.c, missing=sum(s.missing() for s in n.streams.values()),
+            "counters": dict(n.c, missing=n.missing(),
                              reboots=sum(s.reboots for s in n.streams.values())),
-            "streams": {src: {"boot_id": s.boot_id, "missing": s.missing(), "reboots": s.reboots}
+            "streams": {src: {"boot_id": s.boot_id, "reboots": s.reboots}
                         for src, s in n.streams.items()},
         }
 

@@ -18,12 +18,12 @@ static void emit(uint8_t flags) {
 
 int main() {
   nodeBegin();  // NVS 비어 있음 → 무작위 시작(0x1a2b)
-  // 실측과 vtemp(가상) 패킷이 섞여도 출처마다 1, 2, 3 ...
+  // 실측과 vtemp(가상) 패킷이 섞여도 한 번호열: 1, 2, 3 ... (출처 무관)
   const uint8_t mix[] = {0, 0, PKT_FLAG_SIMULATION, 0, PKT_FLAG_SIMULATION | PKT_FLAG_EVENT,
                          PKT_FLAG_EVENT, PKT_FLAG_SIMULATION};
   for (uint8_t f : mix) emit(f);
-  // 실측 seq를 65535까지 채운 뒤(지금 4) 다음 패킷 → 새 boot_id, 두 출처 모두 1부터
-  for (int i = 0; i < 65535 - 4; i++) {
+  // seq를 65535까지 채운 뒤(지금 7) 다음 패킷 → 새 boot_id, 1부터
+  for (int i = 0; i < 65535 - 7; i++) {
     PktHeader h = {};
     nodeFillHeader(h, PKT_ENVIRONMENT, 0);
   }

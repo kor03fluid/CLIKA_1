@@ -117,6 +117,14 @@ class ReportFromRawCaptureTest(unittest.TestCase):
         self.assertEqual(rep["results"], {"invalid": 1, "raw": 1})
         self.assertEqual([n["packets"] for n in rep["nodes"]], [1])
 
+    def test_vtemp_mixed_sources_share_one_seq(self):
+        # 환경 노드 vtemp: 한 boot의 번호열을 실측·가상이 나눠 쓴다. 출처별로 비어 보여도 누락이 아니다
+        srcs = ["device", "device", "simulation", "device", "simulation", "device"]
+        lines = [json.dumps(via(environment(seq=i + 1, source=s, boot="boot_1a2b"), "env_01"))
+                 for i, s in enumerate(srcs) if i != 3]  # seq 4(실측)는 진짜 누락
+        (env,) = summarize(read_log(self.write(lines)))["nodes"]
+        self.assertEqual((env["sources"], env["packets"], env["missing"]), ({"device": 3, "simulation": 2}, 5, 1))
+
     def test_rate_counts_intervals_not_packets(self):
         # 10초마다 보내는 노드: 13개(120초) → 분당 6
         path = self.write([json.dumps(status(seq=s, source="device", uptime_ms=s * 10000)) for s in range(1, 14)])

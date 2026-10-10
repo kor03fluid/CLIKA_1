@@ -1,8 +1,19 @@
-# PC 데이터 서버 (팀원 C)
+# C 시험 서버·도구 (팀원 C)
 
-게이트웨이·환경 노드가 USB로 보내는 **공통 데이터 규격 v1**([`docs/data_spec_v1.md`](../docs/data_spec_v1.md)) NDJSON을
-받아 검사·중복 제거하고, 분대원 8명의 통신 상태와 사건 상태를 관리하고, 로그로 남기고, 노트북과 휴대폰 관제
-화면에 같은 상태를 동시에 내보낸다. 실물이 없을 때는 가상 노드로 같은 형식의 데이터를 만든다.
+> **공식 PC 관제는 팀장 쪽 서버(`node server.mjs`, 기본 8080)다.** 팀장 인수인계(2026-10-10)에 따라 PC 관제·공통 입력
+> 검증·사건 관리·USB 전달 프로그램은 팀장(사용자·Codex) 담당이고, C는 환경·예비 노드 펌웨어, 앵커 스캔·관측 보고,
+> 보드 현장 검증을 맡는다. 이 폴더는 C가 그 일을 하는 데 쓰는 **시험 도구**다. 관제 화면으로 쓰지 않는다.
+>
+> - 환경 노드 USB 출력 확인(`stats` 진단 줄, 앵커 관측. 팀장 서버는 아직 `anchor_observation`을 받지 않음)
+> - 실물 시험 측정: `report.py`로 수신 누락·송신량·앵커 RSSI 정리([`docs/c_hw_test.md`](../docs/c_hw_test.md))
+> - 펌웨어 출력이 규격 v1과 맞는지 PC에서 빌드해 확인하는 시험(`tests/test_firmware_contract.py`)
+> - 가상 노드(앵커 포함)로 펌웨어·도구를 실물 없이 시험
+>
+> 팀장 서버와 같은 노트북에서 함께 켤 수 있게 기본 포트는 **8090**이다. 같은 COM 포트는 한 프로그램만 열 수 있다.
+
+**공통 데이터 규격 v1**([`docs/data_spec_v1.md`](../docs/data_spec_v1.md)) NDJSON을 USB로 받아 검사·중복 제거하고,
+노드별 통신 상태·사건·앵커 관측을 보관하고, 로그로 남기고, 디버그 화면에 보여 준다. 실물이 없을 때는 가상 노드로
+같은 형식의 데이터를 만든다.
 
 ```
 게이트웨이(USB NDJSON) ─┐
@@ -11,8 +22,7 @@
 로그 재생 ──────────────┘                        └─> logs/<시각>/rx.jsonl, events.jsonl
 ```
 
-관제 UI·구역 추정·PMVP는 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
-`/`의 디버그 화면은 데이터 확인용이다.
+관제 UI·구역 추정·PMVP는 팀장 담당이다. `/`의 디버그 화면은 C의 데이터 확인용이다.
 
 **검증 상태**: 단위 테스트 105개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
 PC에서 빌드·실행한 결과를 검사기로 확인한다. 펌웨어의 `boot_id`·`seq` 부여 코드도 PC에서 빌드해 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
@@ -31,7 +41,8 @@ python server.py --roster roster.json                    # 분대원 배정·환
 python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 ```
 
-- 브라우저: 노트북 `http://localhost:8080`, 휴대폰 `http://<노트북 IP>:8080` (같은 Wi-Fi·핫스팟, 방화벽 허용).
+- 브라우저: 노트북 `http://localhost:8090`, 휴대폰 `http://<노트북 IP>:8090` (같은 Wi-Fi·핫스팟, 방화벽 허용).
+  팀장 서버(8080)와 함께 켤 때 포트가 겹치지 않는다. `--port`로 바꿀 수 있다.
   휴대폰 경로는 핫스팟·Wi-Fi 방출이 생기므로 병사 노드 BLE 송신량과 구분해서 설명한다.
 - 관제 UI를 별도 개발 서버에서 띄워 확인·종료 버튼까지 쓰려면 `--allow-origin http://localhost:5173`처럼 그 주소를 지정한다.
 - 주요 옵션: `--virtual-speed 3`(배속), `--virtual-loop`, `--loss-rate 0.2`(무작위 누락), `--port`, `--log-dir`.
@@ -130,6 +141,7 @@ environment_nodes[]   node_id · location_name · connection_state · data_stale
 anchor_observations[] anchor_id · observed_node_id · observed_boot_id · observed_seq · rssi_dbm · observed_at
                       received_at · age_ms · source · route   (앵커·병사·출처마다 한 줄: 실제·가상을 섞지 않음)
 nodes{node_id}        노드별 진단: kinds · active_source · counters(rx·dup·late·stale_boot·shadowed·missing·relayed·reboots)
+                      missing은 노드·boot 단위(출처 무관)로 센다. streams{source}: boot_id · reboots
 event_counts · totals · recent_invalid · recent_warnings · device_stats · virtual · inputs · replay
 log                   dir · error(마지막 쓰기 오류) · dropped(쓰지 못하고 버린 줄 수)
 ```
@@ -180,7 +192,7 @@ python report.py logs/20261010-120000 --json > result.json
 
 | 표 | 내용 |
 |---|---|
-| 노드별 수신 | 출처별 고유 패킷·중복·누락(boot마다 받은 seq 범위 안의 빈 번호)·손실%·분당 송신(처음·마지막 패킷 사이 seq 증가 / 장치 `uptime_ms` 증가)·종류별 수 |
+| 노드별 수신 | 노드마다 한 줄: 출처별 패킷 수, 고유 패킷·중복·누락(boot마다 받은 seq 범위 안의 빈 번호, 출처 무관)·손실%·분당 송신(처음·마지막 패킷 사이 seq 증가 / 장치 `uptime_ms` 증가)·종류별 수. 규격상 seq는 부팅 내 모든 패킷 공통이라 vtemp 시험처럼 실측·가상이 섞여도 가짜 누락이 없다 |
 | 경로별 수신 | `gateway_id`별 수신 수. 노드가 USB로 자기 송신분도 내면(환경 노드) 그것 대비 게이트웨이의 BLE 수신률 |
 | 환경 노드 송신량 | `stats` 진단 줄 사이의 차이: 패킷·창·추정 광고 이벤트·바이트·버림, 앵커 수신·보고·큐밀림. 양 끝의 `tx_mode`·`anchor_enabled`가 다르면 "전환 포함" |
 | 앵커 관측 RSSI | 앵커·병사 쌍마다 보고 수, RSSI 평균·표준편차·최소·최대, 관측 경과 중앙값 |
@@ -200,7 +212,6 @@ python -m unittest discover -s tests
 
 ## 남은 일
 
+- [ ] 팀장 서버가 `anchor_observation`을 받게 되면, 이 서버의 앵커 관측 처리(`hub.py` `_anchor`)를 참고로 넘긴다
+- [ ] 실물 시험 측정(수신 누락·송신량·앵커 RSSI)을 이 도구로 기록해 팀장에게 넘긴다
 - [ ] 팀원 B: 게이트웨이 USB 출력이 규격 v1과 맞는지 실물로 확인(이 서버의 `recent_invalid`로 이유 확인 가능)
-- [ ] 팀장: 관제 UI가 쓸 필드 확인, 분대원 이름·환경 노드 설치 지점 등록
-- [ ] 실물 보고 주기에 맞춰 두절 기준 확인
-- [ ] 앵커 구역 추정(`estimated_zone_id`)은 앵커 수신 시험 통과 후 팀장과 적용

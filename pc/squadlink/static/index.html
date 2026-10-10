@@ -11,6 +11,7 @@
           --amber:#ccb781; --violet:#b9a6d3;
           font-family:'Malgun Gothic','Apple SD Gothic Neo',system-ui,sans-serif; font-size:14px; }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--bg); color:var(--text); line-height:1.4; }
   p, h1, h2, h3, dl, dd { margin:0; }
   h1, h2, h3 { font-weight:600; }
@@ -37,7 +38,51 @@
   #conn.crit { color:var(--red); } #conn.crit:before { background:var(--red); }
   #logerr { background:#382a29; color:var(--red); padding:10px 32px; border-bottom:1px solid var(--red); font-size:12px; }
 
-  main { max-width:1680px; margin:0 auto; padding:0 32px; }
+  .page-inner { max-width:1680px; margin:0 auto; padding:0 32px; }
+
+  /* 화면 넘기기: 첫 장은 현황(기존 화면 그대로), 다음 장부터 병사별 상세 */
+  .pager-nav { position:sticky; top:0; z-index:5; background:var(--bg); border-bottom:1px solid var(--line);
+               display:flex; align-items:center; gap:8px; padding:6px 32px; }
+  .nav-arrow { flex:none; width:34px; height:34px; background:transparent; border:1px solid var(--line);
+               color:var(--cyan); font-size:18px; line-height:1; }
+  .nav-arrow:hover:not(:disabled) { border-color:var(--cyan); background:var(--surface); }
+  .nav-arrow:disabled { opacity:.35; cursor:default; }
+  .pg-tabs { position:relative; display:flex; gap:2px; overflow-x:auto; flex:1 1 auto; min-width:0;
+             scrollbar-width:none; }
+  .pg-tabs::-webkit-scrollbar { display:none; }
+  .pg-tabs button { flex:none; background:none; border:0; border-bottom:2px solid transparent; color:var(--muted);
+                    padding:8px 12px; font-size:12px; white-space:nowrap; }
+  .pg-tabs button:hover { color:var(--text); }
+  .pg-tabs button[aria-selected=true] { color:var(--text); border-bottom-color:var(--cyan); }
+  .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--line); margin-right:6px;
+         vertical-align:middle; }
+  .dot.s-connected { background:var(--green); } .dot.s-waiting { background:var(--amber); }
+  .dot.s-lost { background:var(--red); } .dot.alert { box-shadow:0 0 0 2px var(--red); }
+  .pg-count { flex:none; font-family:Consolas,monospace; font-size:11px; color:var(--muted); min-width:48px;
+              text-align:right; }
+  .pager { display:flex; align-items:flex-start; overflow-x:auto; overflow-y:hidden; scroll-snap-type:x mandatory;
+           overscroll-behavior-x:contain; scrollbar-width:none; }
+  .pager::-webkit-scrollbar { display:none; }
+  .page { flex:0 0 100%; min-width:0; scroll-snap-align:start; scroll-snap-stop:always; }
+
+  .card[data-soldier] { cursor:pointer; }
+  .card[data-soldier]:hover { background:var(--surface2); }
+  .more { margin-left:auto; color:var(--cyan); }
+  .link { background:none; border:0; padding:0; color:var(--text); font-family:Consolas,monospace; font-size:11px;
+          text-decoration:underline dotted var(--muted); text-underline-offset:3px; }
+  .link:hover { color:var(--cyan); }
+  .sd-head { display:flex; justify-content:space-between; align-items:flex-end; gap:12px 24px; flex-wrap:wrap;
+             padding:18px 0 14px; }
+  .sd-head h2 { font-size:20px; letter-spacing:-.02em; }
+  .sd-head h2 .id { font-family:Consolas,monospace; font-size:12px; color:var(--cyan); font-weight:400; margin-left:10px; }
+  .sd-metrics { padding:4px 0 18px; border-bottom:1px solid var(--line); }
+  .sd-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px 32px; padding:20px 0 28px; }
+  .sd-box { min-width:0; }
+  .sd-box.wide { grid-column:1 / -1; }
+  .kv { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px 16px; }
+  .kv dt { font-size:10px; color:var(--muted); margin-bottom:4px; }
+  .kv dd { font-size:12px; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+  .sd-note { font-size:10px; color:var(--muted); margin-top:12px; line-height:1.5; }
   .overview { display:flex; justify-content:space-between; align-items:flex-end; gap:16px 24px; padding:18px 0;
               border-bottom:1px solid var(--line); flex-wrap:wrap; }
   .metrics { display:flex; gap:16px 28px; flex-wrap:wrap; }
@@ -152,11 +197,16 @@
     .workspace { grid-template-columns:1fr; gap:28px; }
     .col.right { border-left:0; padding-left:0; }
     .control-grid { grid-template-columns:1fr; }
+    .sd-grid { grid-template-columns:1fr; }
   }
   @media (max-width:700px) {
     .masthead { padding:14px 16px; gap:12px; align-items:flex-start; }
     #logerr { padding:10px 16px; }
-    main { padding:0 16px; }
+    .page-inner { padding:0 16px; }
+    .pager-nav { padding:6px 16px; gap:6px; } .pg-count { display:none; }
+    .nav-arrow { width:40px; height:40px; }
+    .kv { grid-template-columns:repeat(2,minmax(0,1fr)); }
+    .sd-head h2 .id { display:block; margin:4px 0 0; }
     .brand { gap:10px; } .brand-mark { width:36px; height:36px; }
     .eyebrow { font-size:8px; letter-spacing:.08em; }
     h1 { font-size:19px; } h1 small { display:block; margin:4px 0 0; }
@@ -181,7 +231,17 @@
   </div>
 </header>
 <div id="logerr" role="alert" hidden></div>
-<main>
+<nav class="pager-nav" id="pg-nav" aria-label="화면 넘기기 (옆으로 밀거나 ← → 키)">
+  <button type="button" class="nav-arrow" id="pg-prev" aria-label="이전 화면" disabled>‹</button>
+  <div class="pg-tabs" id="pg-tabs" role="tablist">
+    <button type="button" role="tab" data-page="overview" aria-selected="true">현황</button>
+  </div>
+  <span class="pg-count" id="pg-count">1 / 1</span>
+  <button type="button" class="nav-arrow" id="pg-next" aria-label="다음 화면" disabled>›</button>
+</nav>
+<main class="pager" id="pager">
+<section class="page" data-page="overview" aria-label="현황">
+<div class="page-inner">
   <section class="overview" aria-label="수신 현황">
     <div id="totals" class="metrics" aria-live="polite"></div>
     <div class="inputs-box"><p class="eyebrow">INPUT</p><div id="inputs"></div></div>
@@ -247,8 +307,12 @@
     <div id="dstats"></div>
   </details>
 
-  <footer><span>팀원 C 환경 노드 · 앵커 시험용 화면 · 시각은 한국 시간</span><span>LOCAL / C TEST SERVER</span></footer>
+</div>
+</section>
 </main>
+<div class="page-inner">
+  <footer><span>팀원 C 환경 노드 · 앵커 시험용 화면 · 시각은 한국 시간 · 옆으로 밀거나 ← → 키로 병사 상세</span><span>LOCAL / C TEST SERVER</span></footer>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -307,11 +371,14 @@ function renderState(s) {
     '<p class="empty">환경 노드 수신 대기</p>';
   // 장치를 배정하지 않은 분대원은 한 줄로 모은다(측정값이 없어 카드로 보일 것이 없다)
   const soldiers = s.soldiers || [];
+  const focused = $("soldiers").contains(document.activeElement) ? document.activeElement.dataset.soldier : null;
   const idle = soldiers.filter((x) => x.connection_state === "unassigned");
   $("soldiers").innerHTML = (soldiers.filter((x) => x.connection_state !== "unassigned").map(soldierCard).join("") +
     (idle.length ? `<p class="unassigned">장치 미배정 ${idle.length}명 · ${idle.map((x) =>
-      `<b>${esc(x.soldier_id)}</b>${x.name ? " " + esc(x.name) : ""}`).join(", ")}</p>` : "")) ||
+      `<button type="button" class="link" data-soldier="${esc(x.soldier_id)}">${esc(x.soldier_id)}</button>` +
+      `${x.name ? " " + esc(x.name) : ""}`).join(", ")}</p>` : "")) ||
     '<p class="empty">분대원 없음</p>';
+  if (focused) $("soldiers").querySelector(`[data-soldier="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
 
   const anchors = s.anchor_observations || [];
   $("anchors").innerHTML = anchors.length
@@ -332,6 +399,10 @@ function renderState(s) {
       <span class="mono">${esc(i[2] ?? "—")}</span><span class="msg">${esc(i[3].join(" / "))}</span></div>`).join("") ||
     '<p class="empty">없음</p>';
   $("issues").scrollTop = keep;
+
+  lastState = s;
+  buildPages(s.soldiers || []);
+  renderDetails();
 }
 
 function envCard(x) {
@@ -371,13 +442,15 @@ function soldierCard(x) {
       : `미수신${x.location.location_updated_at ? " (마지막 " + esc(kst(x.location.location_updated_at)) + ")" : ""}`)
     : "—";
   const nEv = (x.active_event_ids || []).length;
-  return `<article class="card ${esc(x.connection_state)} ${x.data_stale && x.connection_state !== "unassigned" ? "stale" : ""}">
+  return `<article class="card ${esc(x.connection_state)} ${x.data_stale && x.connection_state !== "unassigned" ? "stale" : ""}"
+    data-soldier="${esc(x.soldier_id)}" tabindex="0" role="button" aria-label="${esc(x.soldier_id)} 상세 보기">
     <div class="card-top"><strong>${esc(x.soldier_id)}${x.name ? " " + esc(x.name) : ""}<span class="id">${esc(x.assigned_node_id ?? "장치 없음")}</span></strong>
       <span class="tags">${tag(CONN[x.connection_state] || [x.connection_state, ""])}${srcTag(x.source, x.input)}
         ${x.route === "relay" ? '<span class="tag warn">중계</span>' : ""}${nEv ? `<span class="tag crit">사건 ${nEv}</span>` : ""}</span></div>
     <div class="card-meta"><span>심박 <b>${hr}</b></span><span>움직임 <b>${esc(MOTION[st.motion_state] || st.motion_state || "—")}</b></span>
       <span>모드 <b>${x.status ? (st.mode === "covert" ? "기도비닉" : "일반") : "—"}</b></span>
-      <span>위치 <b>${loc}</b></span><span>마지막 수신 <b>${esc(kst(x.last_seen_at))}</b></span></div>
+      <span>위치 <b>${loc}</b></span><span>마지막 수신 <b>${esc(kst(x.last_seen_at))}</b></span>
+      <span class="more">상세 ›</span></div>
   </article>`;
 }
 
@@ -390,7 +463,13 @@ function renderEvents() {
   document.querySelectorAll("[data-tab]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tab === tab)));
   const list = (tab === "pending" ? pending : done).slice(0, 100);
   const keep = $("events").scrollTop;
-  $("events").innerHTML = list.map((e) => {
+  $("events").innerHTML = list.map(incidentHtml).join("") ||
+    `<p class="empty">${tab === "pending" ? "처리할 사건이 없습니다" : "처리 완료된 사건이 없습니다"}</p>`;
+  $("events").scrollTop = keep;
+  renderDetails();
+}
+
+function incidentHtml(e) {
     const id = esc(e.event_id), src = esc(e.source ?? "");
     const who = e.soldier_id ? `${esc(e.soldier_id)} <span class="mono mute">${esc(e.node_id)}</span>` : `<span class="mono">${esc(e.node_id)}</span>`;
     return `<article class="incident ${e.event_type === "sos" ? "sos" : ""} ${e.event_state === "resolved" ? "resolved" : ""}">
@@ -403,8 +482,6 @@ function renderEvents() {
         ${e.event_state === "open" ? `<button class="btn primary" data-a="ack" data-id="${id}" data-src="${src}">확인</button>` : ""}
         ${e.event_state !== "resolved" ? `<button class="btn good" data-a="resolve" data-id="${id}" data-src="${src}">조치 종료</button>` : ""}
       </div></article>`;
-  }).join("") || `<p class="empty">${tab === "pending" ? "처리할 사건이 없습니다" : "처리 완료된 사건이 없습니다"}</p>`;
-  $("events").scrollTop = keep;
 }
 
 function upsertEvent(e) {
@@ -419,7 +496,7 @@ async function post(path, body) {
   return r.json();
 }
 
-$("events").addEventListener("click", async (ev) => {
+document.addEventListener("click", async (ev) => {
   const b = ev.target.closest("button[data-a]");
   if (!b) return;
   const q = b.dataset.src ? `?source=${encodeURIComponent(b.dataset.src)}` : "";
@@ -470,6 +547,229 @@ fetch("/api/scenarios").then((r) => r.json()).then((list) => {
 // 사건 목록은 SSE가 (다시) 연결될 때마다 받는다. 끊긴 동안 생기거나 바뀐 사건을 놓치지 않게.
 const loadEvents = () => fetch("/api/events?limit=500").then((r) => r.json())
   .then((list) => { list.forEach(upsertEvent); renderEvents(); }).catch(() => {});
+
+// ── 화면 넘기기: 첫 장은 현황, 다음 장부터 병사 한 명씩 상세 ──
+let lastState = null;
+let pageIds = ["overview"];
+let pageIdx = 0;
+let firstBuild = true;
+const pager = $("pager");
+const soldierLabel = (id) => { const m = /_(\d+)$/.exec(id || ""); return m ? `병사 ${m[1]}` : String(id ?? ""); };
+const ROUTE = { direct: "직접", relay: "중계", simulation: "가상" };
+const setHTML = (el, html) => { if (el && el._html !== html) { el.innerHTML = html; el._html = html; } };
+// 장의 내용 높이가 바뀌면(사건 추가, 시험 제어 접기 등) 화면 높이를 다시 맞춘다
+const resizeWatch = typeof ResizeObserver === "function" ? new ResizeObserver(() => fitHeight()) : null;
+if (resizeWatch) resizeWatch.observe(pager.querySelector(".page"));
+
+function buildPages(soldiers) {
+  const ids = ["overview", ...soldiers.map((x) => x.soldier_id)];
+  if (ids.join("\n") === pageIds.join("\n")) return;
+  const cur = pageIds[pageIdx];
+  pageIds = ids;
+  pager.querySelectorAll(".page").forEach((p) => { if (p.dataset.page !== "overview") p.remove(); });
+  for (const id of ids.slice(1)) {
+    const sec = document.createElement("section");
+    sec.className = "page";
+    sec.dataset.page = id;
+    sec.setAttribute("aria-label", `${soldierLabel(id)} 상세`);
+    sec.innerHTML = `<div class="page-inner"><div class="sd-top"></div>
+      <div class="sd-grid">
+        <section class="sd-box"><div class="section-heading"><h2>측정 · 수신</h2><span>최근 상태 패킷 기준</span></div><div class="sd-recv"></div></section>
+        <section class="sd-box"><div class="section-heading"><h2>위치</h2><span>GPS · 구역 추정</span></div><div class="sd-loc"></div></section>
+        <section class="sd-box"><div class="section-heading"><h2>사건</h2><span>이 병사의 최근 10건</span></div><div class="sd-events"></div></section>
+        <section class="sd-box"><div class="section-heading"><h2>이 병사를 본 앵커</h2><span>직접 수신 RSSI</span></div><div class="sd-anchor scroll"></div></section>
+        <section class="sd-box wide"><div class="section-heading"><h2>노드 진단</h2><span>C 시험 서버 수신 집계</span></div><div class="sd-diag"></div></section>
+      </div></div>`;
+    pager.appendChild(sec);
+    if (resizeWatch) resizeWatch.observe(sec);
+  }
+  $("pg-tabs").innerHTML = ids.map((id, i) => `<button type="button" role="tab" data-page="${esc(id)}" aria-selected="false">` +
+    (i ? `<span class="dot"></span>${esc(soldierLabel(id))}` : "현황") + "</button>").join("");
+  let keep = Math.max(0, ids.indexOf(cur));
+  if (firstBuild) {
+    firstBuild = false;
+    try { const want = decodeURIComponent(location.hash.slice(1)); if (ids.includes(want)) keep = ids.indexOf(want); } catch (e) {}
+  }
+  goTo(keep, false);
+}
+
+function goTo(i, smooth = true) {
+  i = Math.max(0, Math.min(pageIds.length - 1, i));
+  pager.scrollTo({ left: i * pager.clientWidth, behavior: smooth ? "smooth" : "auto" });
+  setPage(i, smooth);
+}
+
+function setPage(i, user) {
+  const changed = i !== pageIdx;
+  pageIdx = i;
+  const strip = $("pg-tabs");
+  [...strip.children].forEach((b, k) => b.setAttribute("aria-selected", String(k === i)));
+  const b = strip.children[i];
+  if (b && (b.offsetLeft < strip.scrollLeft || b.offsetLeft + b.offsetWidth > strip.scrollLeft + strip.clientWidth)) {
+    strip.scrollLeft = b.offsetLeft - (strip.clientWidth - b.offsetWidth) / 2;
+  }
+  $("pg-prev").disabled = i === 0;
+  $("pg-next").disabled = i >= pageIds.length - 1;
+  $("pg-count").textContent = `${i + 1} / ${pageIds.length}`;
+  try { history.replaceState(null, "", i ? "#" + encodeURIComponent(pageIds[i]) : location.pathname + location.search); } catch (e) {}
+  if (changed && user !== false) {  // 아래로 내려 본 상태에서 넘기면 새 화면의 맨 위부터 보이게
+    const y = pager.getBoundingClientRect().top + window.scrollY - $("pg-nav").offsetHeight;
+    if (window.scrollY > y) window.scrollTo({ top: y });
+  }
+  fitHeight();
+}
+
+// 넘기는 동안에는 보이는 두 장 중 높은 쪽, 멈추면 현재 장의 높이에 맞춘다(짧은 장 밑에 빈 공간이 남지 않게)
+function fitHeight() {
+  const pages = pager.children, w = pager.clientWidth || 1, pos = pager.scrollLeft / w;
+  const a = pages[Math.floor(pos)], b = pages[Math.ceil(pos)];
+  const h = Math.max(a ? a.offsetHeight : 0, b ? b.offsetHeight : 0);
+  if (h) pager.style.height = h + "px";
+}
+
+function showSoldier(id) {
+  const i = pageIds.indexOf(id);
+  if (i > 0) goTo(i);
+}
+
+function soldierDetail(x, s) {
+  const st = x.status || {};
+  const node = x.assigned_node_id;
+  const nEv = (x.active_event_ids || []).length;
+  const now = Date.parse(s.server_time) || Date.now();
+  const age = x.last_seen_at ? Math.max(0, now - Date.parse(x.last_seen_at)) : null;
+  const left = x.connection_state === "connected" && x.timeout_ms && age != null
+    ? Math.max(0, Math.ceil((x.timeout_ms - age) / 1000)) : null;
+  const pos = pageIds.indexOf(x.soldier_id);
+  const top = `<div class="sd-head"><div><p class="eyebrow">SOLDIER DETAIL · ${pos} / ${pageIds.length - 1}</p>
+      <h2>${esc(soldierLabel(x.soldier_id))} 상세${x.name ? " · " + esc(x.name) : ""}<span class="id">${esc(x.soldier_id)} · ${esc(node ?? "장치 없음")}</span></h2></div>
+      <div class="tags">${tag(CONN[x.connection_state] || [x.connection_state, ""])}${srcTag(x.source, x.input)}
+        ${x.route === "relay" ? '<span class="tag warn">중계</span>' : ""}${nEv ? `<span class="tag crit">진행 중 사건 ${nEv}</span>` : ""}</div></div>`;
+  if (!node) return { top: top + '<p class="empty">장치 미배정 · 측정 데이터 없음<br>장치를 배정하면(POST /api/roster) 이 화면에 상태가 표시된다</p>' };
+  const good = st.heart_rate_quality === "good";
+  const metrics = `<div class="metrics sd-metrics">
+      ${metric("심박 (bpm)", x.status ? (good ? st.heart_rate_bpm : "측정 불가") : "—", x.status && good ? "ok" : "")}
+      ${metric("움직임", x.status ? (MOTION[st.motion_state] || st.motion_state || "—") : "—", "")}
+      ${metric("모드", x.status ? (st.mode === "covert" ? "기도비닉" : "일반") : "—", "")}
+      ${metric("수신 경과 (초)", age == null ? "—" : Math.floor(age / 1000), x.connection_state === "lost" ? "crit" : "")}
+      ${metric("두절 판정까지 (초)", left == null ? (x.connection_state === "lost" ? "두절" : "—") : left, left != null && left <= 5 ? "warn" : x.connection_state === "lost" ? "crit" : "")}
+    </div>`;
+  const kv = (items) => `<dl class="kv">${items.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${v}</dd></div>`).join("")}</dl>`;
+  const srcText = x.input === "replay" ? "재생" : x.source === "simulation" ? "가상 시험" : x.source === "device" ? "실측" : "미수신";
+  const recv = kv([
+    ["연결 상태", esc((CONN[x.connection_state] || [x.connection_state])[0])],
+    ["출처", esc(srcText)],
+    ["경로", esc(ROUTE[x.route] || x.route || "—")],
+    ["심박 품질", esc(st.heart_rate_quality ?? "—")],
+    ["측정 수신", esc(kst(x.received_at))],
+    ["최근 패킷", esc(kst(x.last_seen_at))],
+    ["보고 주기", x.heartbeat_interval_ms ? esc(x.heartbeat_interval_ms / 1000) + "초" : "—"],
+    ["두절 판정 기준", x.timeout_ms ? esc(x.timeout_ms / 1000) + "초" : "—"],
+    ["상태 패킷", x.status_seq != null ? `seq ${esc(x.status_seq)} · <span class="mono">${esc(x.status_boot_id)}</span>` : "—"],
+  ]) + '<p class="sd-note">수신 경과가 두절 판정 기준을 넘으면 통신 두절로 본다. 체온 실측 미구현.</p>';
+  const L = x.location;
+  const loc = kv([
+    ["GPS", L ? (L.fix_valid ? '<span class="ok">수신</span>' : '<span class="warn">현재 위치 미수신</span>') : "패킷 없음"],
+    ["위도", L && L.latitude_deg != null ? esc(L.latitude_deg) : "—"],
+    ["경도", L && L.longitude_deg != null ? esc(L.longitude_deg) : "—"],
+    ["HDOP", L && L.hdop != null ? esc(L.hdop) : "—"],
+    ["위치 갱신", esc(kst(L && L.location_updated_at))],
+    ["구역 추정", x.estimated_zone_id ? esc(x.estimated_zone_id) : "검증 후 적용"],
+  ]) + (L && !L.fix_valid && L.latitude_deg != null ? '<p class="sd-note">좌표는 마지막으로 받은 유효 위치다.</p>' : "");
+  const evs = events.filter((e) => e.node_id === node || (e.soldier_id && e.soldier_id === x.soldier_id))
+    .slice().reverse().slice(0, 10);
+  const obs = (s.anchor_observations || []).filter((a) => a.observed_node_id === node);
+  const anchors = obs.length
+    ? "<table><tr><th>앵커</th><th>RSSI</th><th>관측 경과</th><th>출처</th></tr>" + obs.map((a) => {
+        const pct = Math.max(0, Math.min(100, ((a.rssi_dbm ?? -100) + 100) / 70 * 100));
+        return `<tr><td class="mono">${esc(a.anchor_id)}</td>
+          <td><span class="rssi"><span class="bar"><i style="width:${pct.toFixed(0)}%"></i></span>${esc(a.rssi_dbm)} dBm</span></td>
+          <td>${esc(((a.age_ms || 0) / 1000).toFixed(1))} s</td><td>${srcTag(a.source, a.input)}</td></tr>`;
+      }).join("") + "</table>"
+    : '<p class="empty">이 병사를 관측한 앵커 없음</p>';
+  const d = (s.nodes || {})[node];
+  const c = (d && d.counters) || {};
+  const diag = d ? kv([
+    ["수신", esc(c.rx ?? 0)], ["중복", esc(c.dup ?? 0)], ["누락(순번 공백)", esc(c.missing ?? 0)],
+    ["지연", esc((c.late ?? 0) + (c.stale_boot ?? 0))], ["가려짐", esc(c.shadowed ?? 0)], ["중계 수신", esc(c.relayed ?? 0)],
+    ["출처 전환", esc(c.source_changes ?? 0)], ["재부팅", esc(c.reboots ?? 0)],
+    ["패킷 종류", esc((d.kinds || []).join(", ") || "—")],
+  ]) + `<p class="sd-note">부팅: ${Object.entries(d.streams || {}).map(([src, v]) =>
+      `${esc(src)} <span class="mono">${esc(v.boot_id)}</span>`).join(" · ") || "—"}</p>`
+    : '<p class="empty">이 노드의 패킷을 아직 받지 않았다</p>';
+  return { top: top + metrics, recv, loc, anchors, diag,
+           events: evs.map(incidentHtml).join("") || '<p class="empty">사건 없음</p>' };
+}
+
+function renderDetails() {
+  const s = lastState;
+  if (!s) return;
+  const byId = new Map((s.soldiers || []).map((x) => [x.soldier_id, x]));
+  pager.querySelectorAll(".page").forEach((p) => {
+    const x = byId.get(p.dataset.page);
+    if (!x) return;
+    const v = soldierDetail(x, s);
+    setHTML(p.querySelector(".sd-top"), v.top);
+    p.querySelector(".sd-grid").hidden = !x.assigned_node_id;
+    if (!x.assigned_node_id) return;
+    setHTML(p.querySelector(".sd-recv"), v.recv);
+    setHTML(p.querySelector(".sd-loc"), v.loc);
+    setHTML(p.querySelector(".sd-events"), v.events);  // 바뀔 때만 다시 그려 버튼 누르는 중에 사라지지 않게
+    setHTML(p.querySelector(".sd-anchor"), v.anchors);
+    setHTML(p.querySelector(".sd-diag"), v.diag);
+  });
+  [...$("pg-tabs").children].forEach((b) => {
+    const x = byId.get(b.dataset.page), dot = b.querySelector(".dot");
+    if (x && dot) dot.className = `dot s-${x.connection_state}${(x.active_event_ids || []).length ? " alert" : ""}`;
+  });
+  fitHeight();
+}
+
+$("pg-prev").onclick = () => goTo(pageIdx - 1);
+$("pg-next").onclick = () => goTo(pageIdx + 1);
+$("pg-tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-page]");
+  if (b) goTo(pageIds.indexOf(b.dataset.page));
+});
+$("soldiers").addEventListener("click", (e) => {
+  const c = e.target.closest("[data-soldier]");
+  if (c) showSoldier(c.dataset.soldier);
+});
+$("soldiers").addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches("article[data-soldier]")) {
+    e.preventDefault();
+    showSoldier(e.target.dataset.soldier);
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.altKey || e.ctrlKey || e.metaKey || e.target.closest("input, select, textarea")) return;
+  if (e.key === "ArrowRight") goTo(pageIdx + 1);
+  else if (e.key === "ArrowLeft") goTo(pageIdx - 1);
+});
+let settle = null;
+pager.addEventListener("scroll", () => {  // 손가락·트랙패드로 민 경우: 멈춘 뒤 현재 장을 정한다
+  fitHeight();
+  clearTimeout(settle);
+  settle = setTimeout(() => {
+    const i = Math.round(pager.scrollLeft / (pager.clientWidth || 1));
+    if (i !== pageIdx) setPage(i); else fitHeight();
+  }, 120);
+}, { passive: true });
+let drag = null;  // 마우스: 글자가 없는 빈 곳을 잡고 옆으로 끌어도 넘어간다(글자 선택·복사는 그대로)
+const hasText = (el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
+pager.addEventListener("mousedown", (e) => {
+  if (e.button !== 0 || hasText(e.target) ||
+      e.target.closest("button, input, select, textarea, label, summary, a, table, dl, [data-soldier]")) return;
+  drag = { x: e.clientX, y: e.clientY };
+  e.preventDefault();  // 끄는 동안 글자가 선택되지 않게
+});
+window.addEventListener("mouseup", (e) => {
+  if (!drag) return;
+  const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+  drag = null;
+  if (Math.abs(dx) > 80 && Math.abs(dx) > 2 * Math.abs(dy)) goTo(pageIdx + (dx < 0 ? 1 : -1));
+});
+window.addEventListener("resize", () => { pager.scrollLeft = pageIdx * pager.clientWidth; fitHeight(); });
 
 renderEvents();
 const es = new EventSource("/api/stream");

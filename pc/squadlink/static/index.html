@@ -297,7 +297,7 @@
         <h3>장치 명령 (USB 시리얼)</h3>
         <div class="row">
           <select id="cport" aria-label="포트"></select>
-          <input type="text" id="ccmd" placeholder="stats · vsensor on · vdetect sound · vtemp 38" aria-label="명령">
+          <input type="text" id="ccmd" placeholder="stats · check · sensors virtual · vdetect sound · vtemp 38" aria-label="명령">
           <button class="btn primary" id="csend">보내기</button>
         </div>
         <div class="chips" id="chips"></div>
@@ -325,14 +325,26 @@ const EVSTATE = { open: ["확인 전", "crit"], acknowledged: ["지휘관 확인
 const EVTYPE = { sos: "SOS", impact: "충격 관측", prolonged_still: "장시간 무움직임",
                  heat_exposure: "환경 열 노출 주의", connection_lost: "통신 두절" };
 const MOTION = { moving: "움직임", still: "무움직임", unknown: "측정 불가" };
-const COMMANDS = ["stats", "vsensor on", "vsensor off", "vdetect sound", "vdetect flame", "vdetect shock",
-                  "vdetect reed", "vtemp 38", "vtemp off", "anchor test on", "anchor test off"];
+// 환경 모듈(firmware/env_module) 명령. env_node는 stats·vsensor·vdetect·vtemp·anchor test만 안다
+const COMMANDS = ["stats", "check", "config", "diag on", "sensors virtual", "sensors real", "scenario",
+                  "vdetect sound", "vdetect flame", "vdetect shock", "vdetect reed", "vtemp 38", "vtemp off",
+                  "anchor test on", "anchor test off", "profile base", "profile full", "autostats 60"];
 const tag = (pair) => `<span class="tag ${pair[1]}">${esc(pair[0])}</span>`;
 const srcTag = (source, input) => input === "replay" ? '<span class="tag virt">재생</span>'
   : source === "simulation" ? '<span class="tag virt">가상</span>'
   : source === "device" ? '<span class="tag ok">실측</span>' : "";
 let events = [];
 let tab = "pending";
+
+// C 검증을 통과해 팀장 관제 서버로 넘긴 수(--forward-lead)
+function forwardTag(f) {
+  if (!f) return "";
+  const c = f.counts || {};
+  const bad = (c.rejected || 0) + (c.failed || 0);
+  const why = Object.keys(f.rejected || {})[0];
+  return `<span class="tag ${c.failed ? "crit" : bad ? "warn" : "cyan"}" title="${esc(f.url)}${why ? " · 거절: " + esc(why) : ""}">` +
+    `팀장 전달 ${esc(c.accepted || 0)} · 거절 ${esc(c.rejected || 0)} · 실패 ${esc(c.failed || 0)}</span>`;
+}
 
 function metric(label, value, cls) {
   return `<div class="metric ${value ? cls : ""}"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`;
@@ -349,8 +361,8 @@ function renderState(s) {
   const v = s.virtual || {};
   $("inputs").innerHTML = (s.inputs || []).map((i) =>
       `<span class="tag ${i.connected ? "ok" : "crit"}">${esc(i.port)} ${i.connected ? "연결" : "끊김"}</span>`).join("") +
-    (v.running ? `<span class="tag virt">가상 ${esc(v.scenario)} ${esc(v.t)}/${esc(v.length_s)}s</span>` : "") ||
-    '<span class="tag mute">입력 없음</span>';
+    (v.running ? `<span class="tag virt">가상 ${esc(v.scenario)} ${esc(v.t)}/${esc(v.length_s)}s</span>` : "") +
+    forwardTag(s.forward) || '<span class="tag mute">입력 없음</span>';
   const log = s.log || {};
   $("logerr").hidden = !(log.error || log.dropped);
   $("logerr").textContent = log.error || log.dropped ? `로그 쓰기 실패(버린 줄 ${log.dropped || 0}): ${log.error || ""}` : "";
@@ -427,7 +439,7 @@ function envCard(x) {
       <div><dt>습도</dt>${val(e.humidity_pct, "%")}</div>
       <div><dt>조도 (ADC 원시값)</dt>${val(e.light_raw, "")}</div>
     </dl>
-    <div class="sensors">${det(e.sound_detected, "소리")}${det(e.flame_detected, "불꽃")}${det(e.shock_detected, "충격")}${reed}${bad}</div>
+    <div class="sensors">${det(e.sound_detected, "큰 소리")}${det(e.flame_detected, "불꽃")}${det(e.shock_detected, "설치물 충격")}${reed}${bad}</div>
     <div class="card-meta"><span>마지막 수신 <b>${esc(kst(x.last_seen_at))}</b></span>
       ${x.heartbeat_interval_ms ? `<span>보고 주기 <b>${esc(x.heartbeat_interval_ms / 1000)}초</b></span>` : ""}</div>
   </article>`;

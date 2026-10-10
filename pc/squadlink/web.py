@@ -66,6 +66,7 @@ class App:
         self.readers = {}  # port -> SerialReader
         self.replayer = None
         self.virtual = None
+        self.forwarder = None  # 팀장 관제 서버 전달(LeadForwarder), --forward-lead
         self.stopping = False
         self._vlock = threading.Lock()
         self._slock = threading.Lock()
@@ -84,6 +85,8 @@ class App:
         logger = getattr(self.hub, "logger", None)
         if logger is not None:
             s["log"] = logger.status()
+        if self.forwarder is not None:
+            s["forward"] = self.forwarder.status()
         return s
 
     def state_json(self):

@@ -9,6 +9,8 @@
   python server.py --serial COM5 --virtual normal --virtual-nodes halo_02   # 병사 02만 가상
   python server.py --roster roster.json              # 분대원 배정·환경 노드 설치 지점
   python server.py --replay logs/20261010-120000/rx.jsonl
+  python server.py --serial COM5 --forward-lead http://127.0.0.1:8080/api/ingest
+      # 환경 보드 USB → C 검증·중복 제거 → 통과한 가상 데이터만 팀장 관제 서버로
 """
 
 import argparse
@@ -23,6 +25,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from squadlink.forward import LeadForwarder  # noqa: E402
 from squadlink.hub import Hub  # noqa: E402
 from squadlink.ingest import Replayer, SerialReader  # noqa: E402
 from squadlink.logger import JsonlLogger  # noqa: E402
@@ -89,6 +92,12 @@ def parse_args(argv=None):
     p.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN",
                    help="쓰기 API(POST)를 허용할 다른 출처. 관제 UI를 별도 개발 서버에서 띄울 때 "
                         "(예: http://localhost:5173). 여러 번 지정 가능")
+    p.add_argument("--forward-lead", metavar="URL",
+                   help="검증·중복 제거를 통과한 데이터를 팀장 관제 서버로 넘김(예: http://127.0.0.1:8080/api/ingest)")
+    p.add_argument("--forward-source", action="append", choices=["simulation", "device"], default=[],
+                   help="넘길 출처. 기본 simulation(가상 데이터만). 여러 번 지정 가능")
+    p.add_argument("--forward-input", action="append", choices=["serial", "sim", "replay"], default=[],
+                   help="넘길 입력 경로. 기본 serial(환경 보드 USB). C 서버 가상 노드는 sim")
     p.add_argument("--allow-host", action="append", default=[], metavar="NAME",
                    help="IP 주소·localhost·*.local 말고 이 서버를 부르는 이름(예: 노트북 이름)으로 접속해 "
                         "확인·종료 버튼을 쓸 때 그 이름. 여러 번 지정 가능")
@@ -118,6 +127,10 @@ def main(argv=None):
     logger = JsonlLogger(args.log_dir, meta=vars(args))
     hub = Hub(logger=logger, roster=roster, env_nodes=env_nodes)
     app = App(hub, allow_origins=args.allow_origin, allow_hosts=args.allow_host)
+    if args.forward_lead:
+        app.forwarder = LeadForwarder(args.forward_lead, sources=args.forward_source or ["simulation"],
+                                      inputs=args.forward_input or ["serial"]).start()
+        hub.ingest_hooks.append(app.forwarder.offer)
 
     for port in args.serial:
         r = SerialReader(port, args.baud, hub, logger)
@@ -143,12 +156,18 @@ def main(argv=None):
     for url in open_urls(args.host, args.port):
         print(f"  {url}", flush=True)
     print(f"  로그: {logger.dir}  (끄기: Ctrl+C)", flush=True)
+    if app.forwarder is not None:
+        f = app.forwarder
+        print(f"  팀장 서버 전달: {f.url} (출처 {', '.join(f.sources)}, 입력 {', '.join(f.inputs)}, "
+              "C 검증·중복 제거 통과분만)", flush=True)
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:
         pass
     finally:
         app.stopping = True
+        if app.forwarder is not None:
+            app.forwarder.stop()
         httpd.server_close()
         logger.close()
         print("[squadlink] 종료", flush=True)

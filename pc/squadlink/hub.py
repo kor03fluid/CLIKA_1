@@ -148,6 +148,8 @@ class Hub:
     def __init__(self, logger=None, clock=None, roster=None, env_nodes=None, max_events=2000):
         self.lock = threading.RLock()
         self.logger = logger
+        # ingest 결과를 받을 함수들(obj, result, errors, warnings, input_, port). 잠금 밖에서 부른다(팀장 서버 전달 등)
+        self.ingest_hooks = []
         self.clock = clock or SystemClock()
         self.roster = OrderedDict()
         for r in (roster if roster is not None else default_roster()):
@@ -267,7 +269,12 @@ class Hub:
                 self.logger.rx(wall, input_, port, result, obj, errors, warnings)
             if result != "dup":  # 무효 줄도 recent_invalid가 바뀌므로 알린다(게이트웨이 연동 확인용)
                 self._changed()
-            return result
+        for fn in self.ingest_hooks:
+            try:
+                fn(obj, result, errors, warnings, input_, port)
+            except Exception:  # 듣는 쪽 문제로 수신이 멈추지 않게
+                pass
+        return result
 
     def ingest_diag(self, obj, input_, port):
         """장치 진단 줄("# {...}"). 데이터 스트림이 아니며 stats만 보관한다."""

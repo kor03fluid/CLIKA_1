@@ -33,6 +33,8 @@ Python 인터프리터를 묻거나 실행이 안 되면 **Ctrl+Shift+P → "Pyt
 | **7. 팀장 관제 서버 (공식, squad-link, 8080)** | 팀장의 공식 관제 화면(가상 병사 2명, 시연 버튼) | `http://localhost:8080` |
 | 8. 팀장 USB 브리지 | 보드 USB 줄을 팀장 서버로 전달(아래 3-2, 설정 먼저) | 팀장 화면 |
 | 9. 팀장 관제 서버 + C 시험 서버 같이 켜기 | 7번과 1번을 한 번에(멈추면 둘 다 꺼짐) | 8080·8090 |
+| **10. 환경 보드 USB → C 검증 → 팀장 서버 전달** | 환경 모듈 보드(`firmware/env_module`)의 USB를 C 시험 서버가 받아 검사·중복 제거하고, 통과한 가상 데이터만 팀장 서버로 넘김(아래 3-3) | 8090 · 8080 |
+| **11. 팀장 관제 서버 + 환경 보드 전달 같이 켜기** | 7번과 10번을 한 번에 | 8080 · 8090 |
 
 ### 2-1. 보드 없이 바로 해 보기
 
@@ -83,6 +85,19 @@ Python 인터프리터를 묻거나 실행이 안 되면 **Ctrl+Shift+P → "Pyt
 `# `로 시작하는 진단 줄은 `SKIP: invalid NDJSON`으로 넘어간다(정상). 같은 COM은 한 프로그램만 열 수 있으니 C 시험 서버(2·3번)와
 Arduino 시리얼 모니터는 끈다. 시험이 끝나면 `system.json`을 원래대로(`simulator`, `simulation`) 돌린다.
 
+### 3-3. 환경 모듈 보드(가상 데이터) → C 검증 → 팀장 서버 (역할 분담대로)
+
+기획서 10장의 역할대로 C가 USB 입력·검증·중복 제거를 맡고, 팀장 서버는 받기만 한다. 팀장 서버 설정(`system.json`)은 바꾸지 않는다(기본 `simulation`).
+
+1. 보드에 `firmware/env_module`을 올린다(아래 4, 또는 작업 "환경 모듈 펌웨어 업로드"). 처음에는 **가상 데이터**(6개 센서 값을 보드가 만듦, `source: "simulation"`)다.
+2. **11. 팀장 관제 서버 + 환경 보드 전달** → F5 → COM 포트 입력.
+3. C 화면(`http://localhost:8090`) 위쪽에 "팀장 전달 N · 거절 N · 실패 N", 팀장 화면(`http://localhost:8080`) "환경 · 위치"에 `env_01`이 보인다.
+4. C 화면 장치 명령에서 `diag on`을 한 번 보내면(보드에 저장) 시험 조건·`stats`가 C 로그에 남는다. 진단 줄은 팀장 서버로 넘어가지 않는다.
+
+넘기는 것은 C 검사를 통과한 **새 가상 데이터**뿐이다. 중복·지연·규격 위반·실측은 넘기지 않는다(`--forward-source device`를 주면 실측도 넘김).
+열 노출 사건·앵커 관측은 팀장 서버가 아직 받지 않아 "거절"로 세는 것이 정상이다(팀장 확장 예정).
+이 방법은 C 시험 서버가 COM을 열므로 팀장 USB 브리지(8번)는 켜지 않는다.
+
 두 서버는 포트가 달라(C 시험 8090, 팀장 8080) 한 노트북에서 같이 켤 수 있다.
 팀장 서버 자체 시험은 **Tasks: Run Task → "팀장 서버 테스트 (node --test)"**.
 
@@ -93,9 +108,9 @@ Arduino 시리얼 모니터는 끈다. 시험이 끝나면 `system.json`을 원�
 1. 보드 매니저에서 **esp32 by Espressif Systems** 3.x 설치. 목록에 없으면 **파일 → 기본 설정 → 추가 보드 관리자 URL**에
    `https://espressif.github.io/arduino-esp32/package_esp32_index.json`을 넣고 다시 찾는다.
 2. 저장소의 `DHT-sensor-library`, `Adafruit_Sensor`, `RBD_LightSensor` 폴더를 `문서\Arduino\libraries`에 복사.
-3. `firmware\env_node\env_node.ino` 열기 → 보드 **ESP32 Dev Module** → 포트 COMx → 업로드.
+3. `firmware\env_module\env_module.ino`(5장 환경 모듈, 권장) 또는 `firmware\env_node\env_node.ino` 열기 → 보드 **ESP32 Dev Module** → 포트 COMx → 업로드.
 4. 시리얼 모니터 115200bps, 줄 끝 **Newline** → `stats`, 센서 없으면 `vsensor on`.
-5. 예비 보드는 `config.h`의 `NODE_ID`를 `0x32`(env_02)로 바꿔 업로드.
+5. 예비 보드: `env_module`은 같은 펌웨어를 올리고 시리얼로 `id env_02`(소스 수정 없음). `env_node`는 `config.h`의 `NODE_ID`를 `0x32`로 바꿔 업로드.
 
 **VS Code에서 arduino-cli로 (선택)**
 

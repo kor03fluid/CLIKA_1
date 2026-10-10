@@ -91,6 +91,20 @@
       "program": "${workspaceFolder}/squad-link/communication/serial_bridge.py",
       "cwd": "${workspaceFolder}/squad-link",
       "console": "integratedTerminal"
+    },
+    {
+      "name": "10. 환경 보드 USB → C 검증 → 팀장 서버 전달 (가상 데이터)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/pc/server.py",
+      "args": [
+        "--serial",
+        "${input:comPort}",
+        "--forward-lead",
+        "http://127.0.0.1:8080/api/ingest"
+      ],
+      "cwd": "${workspaceFolder}/pc",
+      "console": "integratedTerminal"
     }
   ],
   "inputs": [
@@ -123,6 +137,14 @@
       "configurations": [
         "7. 팀장 관제 서버 (공식, squad-link, 8080)",
         "1. C 시험 서버: 가상 시연 (demo, 보드 없이)"
+      ],
+      "stopAll": true
+    },
+    {
+      "name": "11. 팀장 관제 서버 + 환경 보드 전달(10번) 같이 켜기",
+      "configurations": [
+        "7. 팀장 관제 서버 (공식, squad-link, 8080)",
+        "10. 환경 보드 USB → C 검증 → 팀장 서버 전달 (가상 데이터)"
       ],
       "stopAll": true
     }

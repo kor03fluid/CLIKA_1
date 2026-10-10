@@ -24,7 +24,7 @@
 
 관제 UI·구역 추정·PMVP는 팀장 담당이다. `/`의 디버그 화면은 C의 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 117개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
+**검증 상태**: 단위 테스트 151개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
 PC에서 빌드·실행한 결과를 검사기로 확인한다. 같은 출력을 저장소의 팀장 서버(`squad-link/`) 입력 검사(`ingest`)에도 넣어
 받는지 확인한다(`test_lead_server_contract.py`, Node.js가 없으면 건너뜀). 펌웨어의 `boot_id`·`seq` 부여 코드도 PC에서 빌드해 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
 (데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
@@ -38,6 +38,7 @@ Python 3.9 이상. 시리얼을 쓸 때만 `pip install -r requirements.txt` (py
 ```sh
 python server.py --virtual demo                          # 실물 없이: 규격 11장 시연 흐름
 python server.py --serial COM5                           # 게이트웨이 (Windows)
+python server.py --serial COM5 --forward-lead http://127.0.0.1:8080/api/ingest   # 환경 보드 → C 검증 → 팀장 서버
 python server.py --serial /dev/ttyUSB0 --serial /dev/ttyUSB1   # 게이트웨이 + 환경 노드
 python server.py --serial COM5 --virtual normal --virtual-nodes halo_02   # 병사 02만 가상
 python server.py --roster roster.json                    # 분대원 배정·환경 노드 설치 지점
@@ -184,6 +185,19 @@ log                   dir · error(마지막 쓰기 오류) · dropped(쓰지 �
 디스크가 가득 차는 등 쓰기가 실패하면 그 줄을 버리고 계속 돈다(메모리에 쌓지 않음). 오류는 콘솔에 한 번 출력하고
 `/api/state`의 `log.error`·`log.dropped`와 디버그 화면 맨 위에 보인다. 공간이 생기면 다음 줄부터 다시 쓴다.
 `--replay`로 `rx.jsonl`(받아들였던 줄·중복·지연·진단)이나 NDJSON 파일을 다시 흘릴 수 있다.
+
+## C 검증 → 팀장 관제 서버 전달 (`--forward-lead`)
+
+기획서 10장의 역할(C: USB 입력·검증·중복 제거, 팀장: 관제)대로, 환경 보드의 USB 줄을 이 서버가 받아 검사한 뒤
+**통과한 가상 데이터만** 팀장 서버 `POST /api/ingest`로 넘긴다(`squadlink/forward.py`). 팀장 서버는 고치지 않는다.
+
+| 넘김 | 넘기지 않음 |
+|---|---|
+| 새 패킷(`ok`, 다른 출처가 표시 중이라 가려진 `shadowed`), 규격 오류·경고 없음, `source: "simulation"`, USB 입력 | 중복·지연·이전 부팅·무효·경고, 실측(`--forward-source device`를 주면 넘김), C 서버 가상 노드(`--forward-input sim`이면 넘김), 진단 줄 |
+
+화면 위쪽 "팀장 전달 N · 거절 N · 실패 N"과 `/api/state`의 `forward`에 결과가 나온다.
+팀장 서버가 아직 받지 않는 환경 노드 사건·앵커 관측은 "거절"로 센다(팀장 확장 예정).
+`pc/tests/test_env_module_contract.py`가 팀장 서버를 임시 포트로 띄워 끝까지 확인한다.
 
 ## 팀장 서버로 NDJSON 보내기
 

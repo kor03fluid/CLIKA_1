@@ -27,6 +27,25 @@
       "problemMatcher": []
     },
     {
+      "label": "환경 모듈 펌웨어 빌드 (env_module, arduino-cli)",
+      "type": "shell",
+      "command": "arduino-cli compile --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_module",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "환경 모듈 펌웨어 업로드 (env_module, arduino-cli)",
+      "type": "shell",
+      "command": "arduino-cli compile --upload -p ${input:comPort} --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_module",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "펌웨어 빌드 (arduino-cli)",
       "type": "shell",
       "command": "arduino-cli compile --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_node",

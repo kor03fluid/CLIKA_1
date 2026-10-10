@@ -103,6 +103,31 @@ class ReportFromServerLogTest(unittest.TestCase):
 
 
 class ReportFromRawCaptureTest(unittest.TestCase):
+    def write(self, lines):
+        with tempfile.NamedTemporaryFile("w", suffix=".ndjson", delete=False, encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        self.addCleanup(os.unlink, f.name)
+        return f.name
+
+    def test_invalid_raw_lines_are_skipped(self):
+        bad = environment(seq=1, source="device")
+        bad["source"] = None  # 정렬·집계에서 터지던 줄
+        path = self.write([json.dumps(bad), json.dumps(environment(seq=2, source="device"))])
+        rep = summarize(read_log(path))
+        self.assertEqual(rep["results"], {"invalid": 1, "raw": 1})
+        self.assertEqual([n["packets"] for n in rep["nodes"]], [1])
+
+    def test_rate_counts_intervals_not_packets(self):
+        # 10초마다 보내는 노드: 13개(120초) → 분당 6
+        path = self.write([json.dumps(status(seq=s, source="device", uptime_ms=s * 10000)) for s in range(1, 14)])
+        self.assertEqual(summarize(read_log(path))["nodes"][0]["per_min"], 6.0)
+
+    def test_missing_file(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(main([os.path.join(tempfile.gettempdir(), "no-such-squadlink.jsonl")]), 1)
+        self.assertIn("로그를 읽을 수 없음", err.getvalue())
+
     def test_device_ndjson_with_diag_and_boot_text(self):
         lines = ["ets Jun  8 2016 00:22:57", "rst:0x1 (POWERON_RESET)"]
         lines += [json.dumps(via(environment(seq=s, source="device"), "env_01")) for s in (1, 2, 4)]
@@ -113,7 +138,7 @@ class ReportFromRawCaptureTest(unittest.TestCase):
         rep = summarize(read_log(f.name))
         (env,) = rep["nodes"]
         self.assertEqual((env["packets"], env["missing"]), (3, 1))
-        self.assertEqual(env["per_min"], 60.0)  # uptime 1~4초에 3개
+        self.assertEqual(env["per_min"], 60.0)  # uptime 1~4초 사이 seq 3 증가 → 분당 60
         self.assertEqual(rep["results"], {"text": 2, "raw": 3, "diag": 2})
         self.assertEqual(rep["tx_intervals"][0]["tx_packets_per_min"], 6.0)
         self.assertIsNone(rep["period"]["start"])

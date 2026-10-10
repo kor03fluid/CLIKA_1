@@ -2,8 +2,10 @@
 
 입력은 서버 로그(logs/<시각>/rx.jsonl 또는 그 폴더)나, 장치 USB 출력을 그대로 저장한 NDJSON 파일이다.
 서버 판정(result)은 전체 집계에만 쓰고, 노드별 수치는 패킷의 source·node_id·boot_id·seq로 다시 센다.
+원시 NDJSON 줄은 서버와 같은 검사기(schema.validate)를 통과한 것만 센다.
 
-- 노드별: 고유 패킷 수, 중복, 누락(boot마다 받은 seq 범위 안의 빈 번호), 손실률, 분당 패킷(장치 uptime 기준)
+- 노드별: 고유 패킷 수, 중복, 누락(boot마다 받은 seq 범위 안의 빈 번호), 손실률,
+  분당 송신(boot마다 처음·마지막으로 받은 패킷 사이의 seq 증가 / 장치 uptime 증가)
 - 경로별: 어떤 gateway_id로 몇 개가 들어왔는지. 노드가 USB로 자기 송신분을 함께 내면(환경 노드)
   그것을 보낸 목록으로 보고 다른 게이트웨이의 BLE 수신률을 계산한다.
 - 환경 노드 송신량: "stats" 진단 줄 사이의 차이(같은 boot). 구간 양 끝의 tx_mode·anchor_enabled가 같아야
@@ -15,28 +17,24 @@
 import json
 import os
 import statistics
+import sys
+import unicodedata
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
 from .ingest import classify_line
+from .schema import validate
 
 KST = timezone(timedelta(hours=9))
 TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped")
 ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "table_full_skip",
                "reports", "queue_full_skip")
-HEADER_KEYS = ("packet_type", "node_id", "boot_id", "seq", "source", "uptime_ms", "payload", "transport")
+# 서버가 검사를 통과시킨 줄의 판정. 이 줄들의 obj만 노드별로 센다.
+ACCEPTED_RESULTS = ("ok", "late", "stale_boot", "dup", "shadowed")
 
 
 def _is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
-
-
-def _usable(obj):
-    """노드별로 셀 수 있는 패킷인가(검사기보다 느슨하게, 집계에 필요한 키만 본다)."""
-    return (isinstance(obj, dict) and all(k in obj for k in HEADER_KEYS)
-            and isinstance(obj["node_id"], str) and isinstance(obj["boot_id"], str)
-            and _is_int(obj["seq"]) and _is_int(obj["uptime_ms"])
-            and isinstance(obj["payload"], dict) and isinstance(obj["transport"], dict))
 
 
 def read_log(path):
@@ -58,8 +56,9 @@ def read_log(path):
                 res = obj["result"]
                 body = obj.get("diag") if res == "diag" else obj.get("obj")
                 out.append((ts, res, body))
-            else:
-                out.append((None, None, obj))
+            else:  # 원시 NDJSON: 서버와 같은 검사를 거친다
+                pkt, errors, _ = validate(obj)
+                out.append((None, None, pkt) if not errors else (None, "invalid", obj))
     return out
 
 
@@ -85,7 +84,7 @@ def summarize(records):
     results = Counter()
     times = []
     nodes = defaultdict(_NodeAcc)
-    anchors = defaultdict(lambda: {"rssi": [], "age": [], "keys": set()})
+    anchors = defaultdict(lambda: {"rssi": [], "age": []})
     events = defaultdict(lambda: {"ids": set(), "reports": 0})
     stats_lines = defaultdict(list)  # (node_id, boot_id) -> [stats diag]
 
@@ -97,7 +96,7 @@ def summarize(records):
             if isinstance(obj, dict) and obj.get("type") == "stats":
                 stats_lines[(obj.get("node_id"), obj.get("boot_id"))].append(obj)
             continue
-        if result in ("invalid", "error", "text") or not _usable(obj):
+        if (result is not None and result not in ACCEPTED_RESULTS) or not isinstance(obj, dict):
             continue
         key = (obj["node_id"], obj["source"])
         n = nodes[key]
@@ -141,12 +140,14 @@ def summarize(records):
 def _node_row(node_id, source, n):
     packets = sum(len(s) for s in n.seen.values())
     missing = sum(max(s) - min(s) + 1 - len(s) for s in n.seen.values())
+    # 같은 boot 안에서 seq와 uptime은 함께 늘어나므로, 처음·마지막 패킷 사이 seq 증가가 그동안 보낸 패킷 수다
+    sent_between = sum(max(s) - min(s) for s in n.seen.values())
     span_ms = sum(hi - lo for lo, hi in n.uptime.values())
     return {
         "node_id": node_id, "source": source, "packets": packets, "copies": n.copies,
         "dup": n.copies - packets, "missing": missing,
         "loss_pct": round(100.0 * missing / (packets + missing), 2) if packets else None,
-        "boots": len(n.seen), "per_min": round(packets * 60000.0 / span_ms, 2) if span_ms > 0 else None,
+        "boots": len(n.seen), "per_min": round(sent_between * 60000.0 / span_ms, 2) if span_ms > 0 else None,
         "types": dict(sorted(n.types.items())),
         "routes": {f"{gw}/{route}": c for (gw, route), c in sorted(n.routes.items(), key=lambda kv: str(kv[0]))},
     }
@@ -229,8 +230,8 @@ def _table(headers, rows):
     return "\n".join(out)
 
 
-def _w(s):  # 한글은 두 칸
-    return sum(2 if ord(ch) > 0x1100 else 1 for ch in s)
+def _w(s):  # 한글 등 넓은 글자는 두 칸
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in s)
 
 
 def _pad(s, width):
@@ -241,7 +242,7 @@ def format_text(rep):
     p, r = rep["period"], rep["results"]
     lines = [f"기간(KST): {p['start'] or '-'} ~ {p['end'] or '-'} ({p['seconds'] if p['seconds'] is not None else '-'}초)",
              "줄 판정: " + (" · ".join(f"{k} {v}" for k, v in sorted(r.items())) or "없음"), ""]
-    lines.append("[노드별 수신] 누락 = boot마다 받은 seq 범위 안의 빈 번호, 분당 = 장치 uptime 기준")
+    lines.append("[노드별 수신] 누락 = boot마다 받은 seq 범위 안의 빈 번호, 분당 = 보낸 패킷(seq)/장치 uptime")
     lines.append(_table(
         ["node_id", "source", "패킷", "중복", "누락", "손실%", "boot", "분당", "종류"],
         [[n["node_id"], n["source"], n["packets"], n["dup"], n["missing"], n["loss_pct"], n["boots"],
@@ -280,7 +281,12 @@ def main(argv=None):
     ap.add_argument("log", help="rx.jsonl, 그 폴더, 또는 장치 출력을 저장한 NDJSON")
     ap.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
     args = ap.parse_args(argv)
-    rep = summarize(read_log(args.log))
+    try:
+        records = read_log(args.log)
+    except (OSError, UnicodeDecodeError) as e:
+        print(f"로그를 읽을 수 없음: {e}", file=sys.stderr)
+        return 1
+    rep = summarize(records)
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=2))
     else:

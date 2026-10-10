@@ -34,9 +34,11 @@ Python 인터프리터를 묻거나 실행이 안 되면 **Ctrl+Shift+P → "Pyt
 ### 2-1. 보드 없이 바로 해 보기
 
 1. 목록에서 **1. C 시험 서버: 가상 시연** → F5.
-2. 터미널에 `[squadlink] http://0.0.0.0:8090` 이 뜨면 브라우저에서 `http://localhost:8090`.
+2. 터미널에 `[squadlink] C 시험 서버 실행 중` 아래 주소가 뜨면 브라우저에서 `http://localhost:8090`(Ctrl+클릭으로 열림).
+   `0.0.0.0`은 "모든 네트워크에서 받기"라는 서버 설정이라 브라우저 주소로 쓰면 `ERR_ADDRESS_INVALID`가 난다.
 3. 약 15초 뒤 병사 01 SOS, 35초 뒤 병사 02 송신 중단(약 62초에 통신 두절), 85초에 복구.
-4. 휴대폰: 같은 Wi-Fi에서 `http://<노트북 IP>:8090` (IP는 터미널 `ipconfig`의 IPv4 주소). Windows 방화벽 알림이 뜨면 허용.
+4. 휴대폰: 같은 Wi-Fi에서 터미널에 "(같은 Wi-Fi의 휴대폰)"으로 나온 주소(`http://<노트북 IP>:8090`). 안 나오면 `ipconfig`의
+   IPv4 주소. Windows 방화벽 알림이 뜨면 허용.
 
 ### 2-2. 환경 노드(ESP32) USB로 연결
 
@@ -91,6 +93,7 @@ arduino-cli core install esp32:esp32
 | `python`을 찾을 수 없음 | Python 재설치 때 "Add python.exe to PATH" 체크, 또는 Ctrl+Shift+P → Python: Select Interpreter |
 | `could not open port COM5` / 액세스 거부 | 시리얼 모니터·업로드·팀장 브리지 등 같은 COM을 연 프로그램을 닫는다. 포트 번호 재확인 |
 | `pyserial` 없음 | 작업 "준비: pyserial 설치" |
+| 브라우저에 `ERR_ADDRESS_INVALID` (`http://0.0.0.0:8090`) | 주소를 `http://localhost:8090`으로 바꾼다 |
 | 8090 포트 사용 중 | 이미 켜진 C 시험 서버를 끄거나 `pc/server.py --port 8091` |
 | 휴대폰에서 안 열림 | 같은 Wi-Fi인지, 노트북 IP가 맞는지, Windows 방화벽에서 Python 허용 |
 | 화면의 확인·종료 버튼이 403 | `localhost`·IP 주소로 열기(노트북 이름으로 열면 `--allow-host 그이름` 필요) |

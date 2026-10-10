@@ -16,6 +16,7 @@ import json
 import math
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -41,6 +42,28 @@ def ratio(text):
     if not 0.0 <= v <= 1.0:
         raise argparse.ArgumentTypeError("0~1 사이여야 합니다")
     return v
+
+
+def lan_ip():
+    """휴대폰 접속용 이 PC의 사설망 IP(알 수 없으면 None). 패킷은 보내지 않는다."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+        return None if ip.startswith("127.") else ip
+    except OSError:
+        return None
+
+
+def open_urls(host, port):
+    """브라우저에 넣을 주소. 0.0.0.0(모든 네트워크에서 받기)은 브라우저 주소로 쓸 수 없어 localhost로 바꾼다."""
+    if host in ("0.0.0.0", "", "::"):
+        urls = [f"http://localhost:{port}  (이 PC 브라우저)"]
+        ip = lan_ip()
+        if ip:
+            urls.append(f"http://{ip}:{port}  (같은 Wi-Fi의 휴대폰)")
+        return urls
+    return [f"http://{host}:{port}"]
 
 
 def parse_args(argv=None):
@@ -116,7 +139,10 @@ def main(argv=None):
 
     threading.Thread(target=app.ticker, daemon=True, name="tick").start()
     httpd = serve(app, args.host, args.port)
-    print(f"[squadlink] http://{args.host}:{args.port}  로그: {logger.dir}", flush=True)
+    print("[squadlink] C 시험 서버 실행 중. 브라우저에서 여세요:", flush=True)
+    for url in open_urls(args.host, args.port):
+        print(f"  {url}", flush=True)
+    print(f"  로그: {logger.dir}  (끄기: Ctrl+C)", flush=True)
     try:
         httpd.serve_forever(poll_interval=0.5)
     except KeyboardInterrupt:

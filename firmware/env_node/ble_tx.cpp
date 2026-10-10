@@ -8,6 +8,7 @@ struct TxItem {
   uint8_t buf[PKT_MAX_PAYLOAD];
   uint8_t len;
   uint8_t windowsLeft;
+  bool urgent;
 };
 
 // 레거시 광고 31B = Flags(3B) + 제조사 데이터 머리(4B) + 페이로드. 넘으면 BLE 라이브러리가 조용히 버린다.
@@ -36,23 +37,32 @@ void bleTxBegin() {
   digitalWrite(PIN_LED, LOW);
 }
 
-bool bleTxQueue(const uint8_t* payload, uint8_t len, uint8_t windows) {
+static TxItem& slot(uint8_t i) { return s_q[(s_head + i) % TX_QUEUE_LEN]; }
+
+bool bleTxQueue(const uint8_t* payload, uint8_t len, uint8_t windows, bool urgent) {
   if (len > PKT_MAX_PAYLOAD || windows == 0) return false;
   if (s_count == TX_QUEUE_LEN) {
     s_stats.dropped++;
     return false;
   }
-  TxItem& it = s_q[(s_head + s_count) % TX_QUEUE_LEN];
+  uint8_t pos = s_count;  // 큐 안에서 들어갈 자리(0 = 맨 앞)
+  if (urgent) {
+    pos = s_active ? 1 : 0;  // 광고 중인 창은 끊지 않는다
+    while (pos < s_count && slot(pos).urgent) pos++;
+    for (uint8_t i = s_count; i > pos; i--) slot(i) = slot(i - 1);
+  }
+  TxItem& it = slot(pos);
   memcpy(it.buf, payload, len);
   it.len = len;
   it.windowsLeft = windows;
+  it.urgent = urgent;
   s_count++;
   s_stats.packets++;
   s_stats.payload_bytes += len;
   return true;
 }
 
-static void startWindow(const TxItem& it) {
+static bool startWindow(const TxItem& it) {
   uint8_t md[2 + PKT_MAX_PAYLOAD];
   md[0] = PKT_COMPANY_ID & 0xFF;
   md[1] = PKT_COMPANY_ID >> 8;
@@ -62,8 +72,9 @@ static void startWindow(const TxItem& it) {
   data.setFlags(ESP_BLE_ADV_FLAG_BREDR_NOT_SPT);
   data.setManufacturerData(String((const char*)md, 2 + it.len));
   s_adv->setAdvertisementData(data);
-  s_adv->start();
+  if (!s_adv->start()) return false;
   digitalWrite(PIN_LED, HIGH);
+  return true;
 }
 
 void bleTxLoop(uint32_t now) {
@@ -87,7 +98,11 @@ void bleTxLoop(uint32_t now) {
   }
 
   if (s_count == 0 || (int32_t)(now - s_nextStart) < 0) return;
-  startWindow(s_q[s_head]);
+  if (!startWindow(s_q[s_head])) {  // 창으로 세지 않고 잠시 뒤 같은 패킷으로 다시
+    s_stats.adv_fail++;
+    s_nextStart = now + TX_REPEAT_GAP_MS;
+    return;
+  }
   s_active = true;
   s_windowEnd = now + TX_WINDOW_MS;
 }

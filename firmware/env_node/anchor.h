@@ -10,7 +10,8 @@ struct AnchorStats {
   uint32_t rx_simulation_skip; // 가상(시험) 병사 패킷이라 버림
   uint32_t table_full_skip;   // 병사 표가 가득 차 버림
   uint32_t reports;           // 관측 보고 패킷 수(병사 하나당 하나)
-  uint32_t queue_full_skip;   // 송신 큐가 가득 차 보고를 미룸
+  uint32_t queue_full_skip;   // 송신 큐 자리가 모자라 보고를 미룬 횟수(미룬 묶음당 1)
+  uint32_t scan_restarts;     // 끝 알림 없이 멈춘 스캔을 다시 시작한 횟수
 };
 
 void anchorBegin();

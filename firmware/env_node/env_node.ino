@@ -104,7 +104,7 @@ static void sendEnv(uint32_t now, bool urgent) {
   uint8_t flags = urgent ? PKT_FLAG_EVENT : 0;
   if (sensorsLatest().virtual_temp) flags |= PKT_FLAG_SIMULATION;
   nodeFillHeader(p.h, PKT_ENVIRONMENT, flags);
-  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), urgent ? EVENT_REPEATS : 1);  // 자리는 위에서 확인
+  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), urgent ? EVENT_REPEATS : 1, urgent);  // 자리는 위에서 확인
   printEnvironmentJson(p);
   s_lastSent = p;
   s_sentOnce = true;
@@ -122,7 +122,7 @@ static bool sendEvent(uint8_t type, bool simulation) {
   p.event_type = type;
   p.mode = MODE_NORMAL;  // 환경 노드에는 기도비닉 모드가 없다
   p.event_no = ++s_eventNo[type];
-  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), EVENT_REPEATS);
+  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), EVENT_REPEATS, true);
   printEventJson(p);
   return true;
 }
@@ -130,8 +130,8 @@ static bool sendEvent(uint8_t type, bool simulation) {
 static bool changedEnough(const PktEnvironment& now, const PktEnvironment& last) {
   if (now.sensor_status != last.sensor_status || now.heartbeat_s != last.heartbeat_s) return true;
   // 감지 값 중 리드(현재 상태)만 비교한다. 소리·충격·불꽃은 래치라 감지 송신 다음 비교에서
-  // 참→거짓으로 보여 쓸데없는 패킷이 한 번 더 나간다. 감지는 sensorsPendingDetections()가,
-  // 불꽃이 계속되는 동안은 선언 주기(10초)가 맡는다.
+  // 참→거짓으로 보여 쓸데없는 패킷이 한 번 더 나간다. 감지(리드 개폐 포함)는 sensorsPendingDetections()가
+  // 즉시 송신하고, 불꽃이 계속되는 동안은 선언 주기(10초)가 맡는다. 리드 비교는 놓친 변화의 안전망이다.
   auto reed = [](const PktEnvironment& p) { return (p.detected >> ENV_DT_REED_CLOSED) & 3; };
   if (reed(now) != reed(last)) return true;
   if ((now.air_temp_c10 == ENV_TEMP_NULL) != (last.air_temp_c10 == ENV_TEMP_NULL)) return true;
@@ -182,15 +182,17 @@ static void printStats() {
   diagBegin("stats");
   Serial.printf(",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"uptime_ms\":%lu,"
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
-                "\"dropped\":%lu},"
+                "\"dropped\":%lu,\"adv_fail\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
-                "\"rx_simulation_skip\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu}}\n",
+                "\"rx_simulation_skip\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu,"
+                "\"scan_restarts\":%lu}}\n",
                 modeName(), anchorEnabled() ? "true" : "false", (unsigned long)millis(), (unsigned long)t.packets,
                 (unsigned long)t.windows, (unsigned long)t.est_adv_events,
-                (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)a.rx_total,
+                (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)t.adv_fail,
+                (unsigned long)a.rx_total,
                 (unsigned long)a.rx_soldier, (unsigned long)a.rx_relayed_skip,
                 (unsigned long)a.rx_simulation_skip, (unsigned long)a.table_full_skip,
-                (unsigned long)a.reports, (unsigned long)a.queue_full_skip);
+                (unsigned long)a.reports, (unsigned long)a.queue_full_skip, (unsigned long)a.scan_restarts);
 }
 
 // "vtemp <°C>": 숫자 전체가 올바를 때만 적용한다(오타로 0°C가 들어가지 않게).
@@ -236,6 +238,9 @@ static void handleSerial(uint32_t now) {
 }
 
 void setup() {
+  // 기본은 송신 버퍼가 없어(0) printf가 다 나갈 때까지 loop를 막는다(한 줄 약 400B ≈ 35ms).
+  // 앵커 보고 묶음이면 수백 ms가 막혀 광고 창이 길어지므로 버퍼를 둔다. begin() 전에 정해야 한다.
+  Serial.setTxBufferSize(SERIAL_TX_BUFFER);
   Serial.begin(115200);
   nodeBegin();
   BLEDevice::init("");  // 이름은 광고하지 않음(페이로드 절약)

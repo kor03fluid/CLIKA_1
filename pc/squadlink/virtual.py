@@ -72,6 +72,29 @@ def scenario_length(name):
     return (max(t for t, *_ in steps) + 20) if steps else 60
 
 
+def shortest_drop_s(name):
+    """시나리오의 송신 중단 구간 중 가장 짧은 길이(가상 초). 없으면 None."""
+    started, spans = {}, []
+    for t, node, action, value in sorted(SCENARIOS[name], key=lambda s: s[0]):
+        if action == "drop" and value:
+            started[node] = t
+        elif action == "drop" and node in started:
+            spans.append(t - started.pop(node))
+    return min(spans) if spans else None
+
+
+MIN_TIMEOUT_S = 15.0  # 규격 10장 두절 기준의 최소값(실제 시간)
+
+
+def speed_note(scenario, speed):
+    """배속이 너무 높아 송신 중단이 두절로 보이지 않으면 안내 문구."""
+    drop = shortest_drop_s(scenario)
+    if drop is not None and MIN_TIMEOUT_S * speed >= drop:
+        return (f"{speed:g}배속에서는 송신 중단 {drop:g}초(가상)가 실제 {drop / speed:.1f}초라 "
+                f"두절 기준 최소 {MIN_TIMEOUT_S:g}초보다 짧아 두절로 보이지 않습니다. 3배속 이하로 돌리세요.")
+    return None
+
+
 def transport(route="simulation", relay_id=None, gateway_id=GATEWAY):
     return {"gateway_id": gateway_id, "route": route, "hop_count": 1 if route == "relay" else 0,
             "relay_id": relay_id, "rssi_dbm": None}
@@ -104,9 +127,15 @@ class _Node:
         return f"{self.node_id}:{self.boot_id}:{event_type}:{k}"
 
 
+def declared_hb_ms(hb_ms, speed):
+    """배속에서 선언할 보고 주기. 서버는 두절 기준을 실제 시간으로 재므로 실제 송신 간격을 선언해야 한다."""
+    return max(1, round(hb_ms / speed))
+
+
 class VSoldier(_Node):
-    def __init__(self, node_id, rng, t):
+    def __init__(self, node_id, rng, t, hb_ms=SOLDIER_HB_MS):
         super().__init__(node_id, rng, t)
+        self.hb_ms = hb_ms  # 선언하는 주기(실제 시간 기준)
         self.mode = "normal"
         self.hr = rng.randint(70, 85)
         self.hr_quality = "good"
@@ -135,7 +164,7 @@ class VSoldier(_Node):
             "heart_rate_bpm": self.hr if self.hr_quality == "good" else None,
             "heart_rate_quality": self.hr_quality,
             "motion_state": self.motion,
-            "heartbeat_interval_ms": SOLDIER_HB_MS,
+            "heartbeat_interval_ms": self.hb_ms,
             "sensor_status": {"heart_rate": "ok", "imu": "ok", "body_temperature": "not_implemented",
                               "gps": "ok" if self.gps_enabled else "disabled"},
             "body_temperature_c": None,  # 체온 실측 미구현
@@ -153,8 +182,9 @@ class VSoldier(_Node):
 
 
 class VEnv(_Node):
-    def __init__(self, rng, t):
+    def __init__(self, rng, t, hb_ms=ENV_HB_MS):
         super().__init__(ENV_NODE, rng, t)
+        self.hb_ms = hb_ms
         self.temp = 24.0
         self.target = 24.0
         self.hum = 45
@@ -181,7 +211,7 @@ class VEnv(_Node):
         detected, self.detected = self.detected, {k: False for k in self.detected}
         return {
             "air_temperature_c": round(self.temp, 1), "humidity_pct": self.hum,
-            "light_raw": self.light + self.rng.randint(-30, 30), "heartbeat_interval_ms": ENV_HB_MS,
+            "light_raw": self.light + self.rng.randint(-30, 30), "heartbeat_interval_ms": self.hb_ms,
             "sensor_status": {"dht11": "ok", "light": "ok", "sound": "ok", "flame": "ok",
                               "shock": "ok", "reed": "ok"},
             "sound_detected": detected["sound"], "flame_detected": detected["flame"],
@@ -197,7 +227,10 @@ class VAnchor:
 
 
 class Simulator:
-    def __init__(self, emit, scenario="normal", nodes=None, seed=None, loop=False, loss_rate=0.0):
+    def __init__(self, emit, scenario="normal", nodes=None, seed=None, loop=False, loss_rate=0.0, speed=1.0):
+        """speed: step()에 넘기는 가상 시각이 실제 시간보다 몇 배 빠른가(선언 주기를 그만큼 줄인다)."""
+        if not (speed > 0 and math.isfinite(speed)):
+            raise ValueError("virtual speed must be a finite number > 0")
         if scenario not in SCENARIOS:
             raise ValueError("unknown scenario: " + str(scenario))
         if not 0.0 <= loss_rate <= 1.0:
@@ -215,8 +248,10 @@ class Simulator:
         self.length = scenario_length(scenario)
         self.t = 0.0
         self.base = 0.0
-        self.soldiers = {n: VSoldier(n, self.rng, 0.0) for n in SOLDIERS if n in nodes}
-        self.env = VEnv(self.rng, 0.0) if ENV_NODE in nodes else None
+        self.speed = speed
+        self.soldiers = {n: VSoldier(n, self.rng, 0.0, declared_hb_ms(SOLDIER_HB_MS, speed))
+                         for n in SOLDIERS if n in nodes}
+        self.env = VEnv(self.rng, 0.0, declared_hb_ms(ENV_HB_MS, speed)) if ENV_NODE in nodes else None
         self.anchors = []
         if self.env is not None:
             self.anchors.append(VAnchor(self.env))
@@ -227,7 +262,7 @@ class Simulator:
 
     def status(self):
         return {"scenario": self.scenario, "nodes": list(self.nodes), "t": round(self.t, 1),
-                "length_s": self.length, "loop": self.loop}
+                "length_s": self.length, "loop": self.loop, "note": speed_note(self.scenario, self.speed)}
 
     # ----- 내보내기 -----
     def _send(self, s, pkt):
@@ -292,6 +327,8 @@ class Simulator:
             s.next_tx = t
         elif action == "drop":
             s.drop = value
+            if not value:
+                s.next_tx = t  # 송신 재개: 바로 새 상태를 보낸다(규격 11장 5단계)
         elif action == "dup":
             s.dup = value
         elif action == "late":
@@ -387,7 +424,7 @@ class VirtualRunner(threading.Thread):
         super().__init__(daemon=True, name="virtual")
         self.hub = hub
         self.speed = speed
-        self.sim = Simulator(self._emit, **sim_kwargs)
+        self.sim = Simulator(self._emit, speed=speed, **sim_kwargs)
         self._stop_evt = threading.Event()
 
     def _emit(self, obj):

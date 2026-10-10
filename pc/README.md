@@ -14,7 +14,7 @@
 관제 UI·구역 추정·PMVP는 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
 `/`의 디버그 화면은 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 90개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
+**검증 상태**: 단위 테스트 105개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
 PC에서 빌드·실행한 결과를 검사기로 확인한다. 펌웨어의 `boot_id`·`seq` 부여 코드도 PC에서 빌드해 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
 (데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
@@ -34,7 +34,9 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 - 브라우저: 노트북 `http://localhost:8080`, 휴대폰 `http://<노트북 IP>:8080` (같은 Wi-Fi·핫스팟, 방화벽 허용).
   휴대폰 경로는 핫스팟·Wi-Fi 방출이 생기므로 병사 노드 BLE 송신량과 구분해서 설명한다.
 - 관제 UI를 별도 개발 서버에서 띄워 확인·종료 버튼까지 쓰려면 `--allow-origin http://localhost:5173`처럼 그 주소를 지정한다.
-- 주요 옵션: `--virtual-speed 10`(배속), `--virtual-loop`, `--loss-rate 0.2`(무작위 누락), `--port`, `--log-dir`.
+- 주요 옵션: `--virtual-speed 3`(배속), `--virtual-loop`, `--loss-rate 0.2`(무작위 누락), `--port`, `--log-dir`.
+  배속이면 가상 노드가 선언 주기를 실제 간격(10초/배속)으로 줄여 보낸다. 두절 기준의 최소값이 실제 15초라서
+  송신 중단 시나리오(`demo`·`loss`)는 **3배속 이하**에서만 두절로 보인다(넘으면 콘솔·디버그 화면에 주의 문구).
 - 시리얼 장치가 빠졌다 다시 꽂히면 2초마다 자동으로 다시 연다. Ctrl+C·SIGTERM으로 끄면 남은 로그를 모두 쓰고 닫는다.
 - 서버가 시리얼 포트를 잡고 있는 동안 장치 명령(`stats`, `mode fixed`, `anchor off`, `vtemp 38` 등)은 디버그 화면의
   **장치 명령** 칸으로 보낸다(`POST /api/cmd`와 같음). 마지막 `stats` 결과가 그 아래에 보인다.
@@ -97,7 +99,7 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 |---|---|
 | `GET /api/state` | 전체 상태(아래) |
 | `GET /api/events?since=<n>&limit=200` | 사건 목록(`n`보다 나중 것) |
-| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시). 상태 JSON은 변경당 한 번 만들어 모든 연결이 같이 쓴다. 가상 노드 시작·중지, 시리얼 연결·끊김, 재생 종료도 변경으로 보낸다 |
+| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시). 상태 JSON은 변경당 한 번 만들어 모든 연결이 같이 쓴다. 가상 노드 시작·중지, 시리얼 연결·끊김, 재생 종료, 무효 패킷도 변경으로 보낸다. 디버그 화면은 SSE가 다시 연결될 때마다 사건 목록을 다시 받는다 |
 | `GET /api/roster` / `POST /api/roster` | 분대원 배정 조회·변경 `{"soldier_id","assigned_node_id"(null 가능),"name"}` |
 | `POST /api/env_nodes` | 환경 노드 설치 지점 `{"node_id","location_name"}` |
 | `POST /api/events/<event_id>/ack` | 지휘관 확인. body `{"by"}` 선택. 같은 ID가 두 출처에 있으면 `?source=device` |
@@ -110,7 +112,9 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 
 쓰기 요청(POST)은 `Content-Type: application/json`이어야 한다(아니면 415). 브라우저에서 오는 쓰기는 같은 출처와
 `--allow-origin`으로 지정한 출처만 받는다(아니면 403). Origin 헤더가 없는 클라이언트(curl, 스크립트)는 받는다.
-같은 네트워크의 기기가 직접 요청하는 것까지 막지는 않는다.
+같은 출처로 인정하는 주소는 IP 주소·`localhost`·`*.local`이다(DNS 리바인딩 방지). 노트북 이름 같은 다른 이름으로
+접속해 버튼을 쓰려면 `--allow-host 그이름`을 준다. 같은 네트워크의 기기가 직접 요청하는 것까지 막지는 않는다.
+본문은 `Content-Length`가 있어야 한다(청크 전송은 411). 짝 없는 서로게이트(`"\ud83d"`)가 든 JSON은 400.
 
 `/api/state` 구조:
 
@@ -124,7 +128,7 @@ soldiers[]            soldier_id · name · assigned_node_id · connection_state
 environment_nodes[]   node_id · location_name · connection_state · data_stale · source · input · last_seen_at
                       received_at · heartbeat_interval_ms · timeout_ms · environment(최근 payload) · active_event_ids
 anchor_observations[] anchor_id · observed_node_id · observed_boot_id · observed_seq · rssi_dbm · observed_at
-                      received_at · age_ms · source · route
+                      received_at · age_ms · source · route   (앵커·병사·출처마다 한 줄: 실제·가상을 섞지 않음)
 nodes{node_id}        노드별 진단: kinds · active_source · counters(rx·dup·late·stale_boot·shadowed·missing·relayed·reboots)
 event_counts · totals · recent_invalid · recent_warnings · device_stats · virtual · inputs · replay
 log                   dir · error(마지막 쓰기 오류) · dropped(쓰지 못하고 버린 줄 수)

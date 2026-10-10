@@ -107,6 +107,7 @@ class NodeState:
         self.streams = {}
         self.active = None        # 표시 중인 출처
         self.active_port = None
+        self.port_source = {}     # 입력 포트 -> 그 포트로 이 노드의 마지막 패킷이 실어 온 출처
         self.active_input = None
         self.latest = {}          # packet_type -> {"packet", "received_at", "input", "port"}
         self.last_fix = None      # 마지막 유효 GPS
@@ -163,7 +164,7 @@ class Hub:
                 raise ValueError(f"환경 노드 항목에 node_id 문자열이 필요함: {e!r}")
             self.env_registry[e["node_id"]] = {"location_name": e.get("location_name")}
         self.nodes = {}
-        self.anchors = {}            # (anchor_id, observed_node_id) -> 관측
+        self.anchors = {}            # (anchor_id, observed_node_id, source) -> 관측
         self.events = OrderedDict()  # (source, event_id) -> 사건
         self.max_events = max_events
         self._event_n = itertools.count(1)
@@ -262,7 +263,7 @@ class Hub:
                 self.totals["error"] += 1
             if self.logger:
                 self.logger.rx(wall, input_, port, result, obj, errors, warnings)
-            if result not in ("dup", "invalid"):
+            if result != "dup":  # 무효 줄도 recent_invalid가 바뀌므로 알린다(게이트웨이 연동 확인용)
                 self._changed()
             return result
 
@@ -314,29 +315,28 @@ class Hub:
             return ("ok" if order == "new" else order), errors, warnings
 
         # 출처 선택: 실제(device) 우선. 표시 중인 출처가 활동 중이면 다른 출처는 가린다.
-        # 같은 입력 포트에서 출처가 바뀌면(예: 환경 노드 vtemp 시험) 장치 자신이 바꾼 것으로 보고 따른다.
+        # 표시 중인 출처를 실어 오던 포트에서 출처가 바뀌면(예: 환경 노드 vtemp 시험) 장치 자신이 바꾼 것으로 보고
+        # 따른다. 환경 노드처럼 USB와 게이트웨이 두 경로로 오는 노드는 어느 경로의 사본이 먼저 와도 같다.
+        last_on_port = n.port_source.get(port)
+        n.port_source[port] = source
+        switch = False
         if n.active is None:
             n.active, n.active_port, n.active_input = source, port, input_
         elif source != n.active:
-            if (source == "device" or port == n.active_port
-                    or not n.stream_alive(n.streams.get(n.active), now)):
-                n.switch_to(source, port, input_)
-            else:
-                n.c["shadowed"] += 1
-                self.totals["shadowed"] += 1
-                # 가려진 출처도 번호는 추적한다. 반복 광고 중복이 사건 보고 수를 부풀리지 않고,
-                # 나중에 이 출처가 표시 출처가 되어도 가려졌던 동안의 번호가 누락으로 잡히지 않는다.
-                # 중복이어도 결과는 "shadowed"로 둔다(재생은 가려진 줄을 다시 흘리지 않는다).
-                order = self._sequence(n, stream, pkt, now)
-                if ptype == "event" and order != "dup":  # 사건은 출처 라벨을 달고 계속 기록한다
-                    self._record_event(pkt, input_, wall, late=order != "new")
-                return "shadowed", errors, warnings
+            switch = (source == "device" or last_on_port == n.active
+                      or not n.stream_alive(n.streams.get(n.active), now))
+            if not switch:
+                return self._shadowed(n, stream, pkt, input_, now, wall, errors, warnings)
 
         order = self._sequence(n, stream, pkt, now)
         if order == "dup":
             n.c["dup"] += 1
             self.totals["dup"] += 1
             return "dup", errors, warnings
+        if switch:
+            if order != "new":  # 중복·지연·이전 boot 사본으로는 출처를 바꾸지 않는다(표시 상태를 지우지 않게)
+                return self._shadowed(n, stream, pkt, input_, now, wall, errors, warnings, order)
+            n.switch_to(source, port, input_)
 
         n.kinds.add(ptype)
         if pkt["transport"]["route"] == "relay":
@@ -367,6 +367,18 @@ class Hub:
             self._anchor(pkt, input_, now, wall)
         return ("ok" if order == "new" else order), errors, warnings
 
+    def _shadowed(self, n, stream, pkt, input_, now, wall, errors, warnings, order=None):
+        """표시하지 않는 출처의 패킷. 번호는 추적한다(반복 광고 중복이 사건 보고 수를 부풀리지 않고,
+        나중에 이 출처가 표시 출처가 되어도 가려졌던 동안의 번호가 누락으로 잡히지 않게).
+        중복이어도 결과는 "shadowed"로 둔다(재생은 가려진 줄을 다시 흘리지 않는다)."""
+        n.c["shadowed"] += 1
+        self.totals["shadowed"] += 1
+        if order is None:
+            order = self._sequence(n, stream, pkt, now)
+        if pkt["packet_type"] == "event" and order != "dup":  # 사건은 출처 라벨을 달고 계속 기록한다
+            self._record_event(pkt, input_, wall, late=order != "new")
+        return "shadowed", errors, warnings
+
     def _sequence(self, n, stream, pkt, now):
         boot, seq = pkt["boot_id"], pkt["seq"]
         if boot != stream.boot_id:
@@ -394,7 +406,7 @@ class Hub:
     def _anchor(self, pkt, input_, now, wall):
         p = pkt["payload"]
         age_s = p["observation_age_ms"] / 1000.0
-        key = (pkt["node_id"], p["observed_node_id"])
+        key = (pkt["node_id"], p["observed_node_id"], pkt["source"])  # 실제·가상 앵커 관측을 섞지 않는다
         cur = self.anchors.get(key)
         observed = now - age_s
         if cur is not None and cur["_observed"] > observed:
@@ -587,7 +599,8 @@ class Hub:
                 nid for nid, n in self.nodes.items()
                 if "environment" in n.kinds and nid not in self.env_registry)
             anchors = []
-            for rec in sorted(self.anchors.values(), key=lambda r: (r["anchor_id"], r["observed_node_id"])):
+            for rec in sorted(self.anchors.values(),
+                             key=lambda r: (r["anchor_id"], r["observed_node_id"], r["source"])):
                 a = {k: v for k, v in rec.items() if not k.startswith("_")}
                 a["age_ms"] = max(0, int((now - rec["_observed"]) * 1000))
                 anchors.append(a)

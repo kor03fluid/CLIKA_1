@@ -37,6 +37,7 @@
 
 // ===== 측정 주기 =====
 #define DHT_READ_MS   2000  // DHT11은 1초 이상 간격 필요
+#define DHT_FAIL_LIMIT 3    // 이만큼 연달아 실패해야 측정 불가(null)로 본다. 그 전까지는 직전 값 유지
 #define LIGHT_READ_MS 500
 
 // ===== 송신 정책 =====
@@ -60,6 +61,7 @@
 #define TX_WINDOW_MS       300  // 패킷 1회 = 광고 창 1개(약 3 광고 이벤트)
 #define TX_REPEAT_GAP_MS   500
 #define TX_QUEUE_LEN       6
+#define SERIAL_TX_BUFFER   4096  // USB 시리얼 송신 버퍼(바이트). 앵커 보고 묶음(약 6×450B)이 loop를 막지 않게
 
 // ===== 앵커 (병사 직접 방송 RSSI 관측) =====
 #define ANCHOR_ENABLE 1
@@ -67,6 +69,9 @@
 #define ANCHOR_SCAN_WINDOW_MS   100  // 패시브 스캔(스캔 요청 송신 없음). USB 전원이라 100% 듀티
 #define ANCHOR_SCAN_CYCLE_S     10   // 스캔 결과 버퍼 정리 주기
 #define ANCHOR_SCAN_RETRY_MS    1000 // 스캔 시작이 실패하면 이만큼 기다렸다 다시 시도
+#define ANCHOR_SCAN_WATCHDOG_MS 5000 // 스캔 주기가 끝났는데 이만큼 더 끝 알림이 없으면 멈춘 것으로 보고 다시 시작
+#define ANCHOR_QUEUE_RETRY_MS   300  // 송신 큐에 자리가 없으면 이만큼 뒤에 다시 시도
+#define ANCHOR_TX_RESERVE       1    // 사건·감지 패킷용으로 비워 두는 송신 큐 칸
 #define ANCHOR_MAX_SOLDIERS     8
 #define ANCHOR_RSSI_ALPHA       0.3f  // EMA 평활 계수
 #define ANCHOR_RSSI_DELTA_DB    6     // 보고된 값 대비 이만큼 바뀌면 즉시 보고

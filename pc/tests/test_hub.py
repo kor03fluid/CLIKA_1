@@ -256,6 +256,54 @@ class SourceTest(unittest.TestCase):
         self.assertEqual(h.ingest(status(seq=6, source="simulation"), "sim", "sim"), "ok")
         self.assertEqual(h.snapshot()["nodes"]["halo_01"]["streams"]["simulation"]["missing"], 0)
 
+    def test_old_device_copy_does_not_switch_back(self):
+        # 가상이 이어받은 뒤 실측의 지난 사본(중복·지연)이 와도 표시 상태를 지우지 않는다
+        h, c = new_hub()
+        h.ingest(status(seq=1, source="device", boot="bd"), "serial", "COM5")
+        h.ingest(status(seq=2, source="device", boot="bd"), "serial", "COM5")
+        c.t = 40
+        self.assertEqual(h.ingest(status(seq=1, source="simulation", bpm=90), "sim", "sim"), "ok")
+        c.t = 41
+        self.assertEqual(h.ingest(status(seq=2, source="device", boot="bd"), "serial", "COM5"), "dup")
+        self.assertEqual(h.ingest(status(seq=1, source="device", boot="bd"), "serial", "COM5"), "dup")
+        s = soldier(h, "soldier_01")
+        self.assertEqual((s["source"], s["connection_state"], s["status"]["heart_rate_bpm"]),
+                         ("simulation", "connected", 90))
+        self.assertEqual(h.ingest(status(seq=3, source="device", boot="bd"), "serial", "COM5"), "ok")
+        self.assertEqual(soldier(h, "soldier_01")["source"], "device")  # 새 실측 패킷은 바로 우선
+
+    def test_env_node_on_two_ports_follows_vtemp_from_either_copy(self):
+        # 환경 노드: USB(COM7)와 게이트웨이(COM5) 두 경로. 어느 사본이 먼저 와도 vtemp 전환을 따른다
+        h, c = new_hub()
+        h.ingest(environment(seq=1, source="device"), "serial", "COM5")  # 게이트웨이 사본이 먼저
+        h.ingest(environment(seq=1, source="device"), "serial", "COM7")
+        c.t = 5
+        self.assertEqual(h.ingest(environment(seq=1, source="simulation", temp=40.0), "serial", "COM7"), "ok")
+        self.assertEqual(h.ingest(environment(seq=1, source="simulation", temp=40.0), "serial", "COM5"), "dup")
+        env = h.snapshot()["environment_nodes"][0]
+        self.assertEqual((env["source"], env["connection_state"], env["environment"]["air_temperature_c"]),
+                         ("simulation", "connected", 40.0))
+        c.t = 10  # 이번엔 게이트웨이 사본이 먼저 와도 같다
+        self.assertEqual(h.ingest(environment(seq=2, source="device"), "serial", "COM5"), "ok")
+        self.assertEqual(h.ingest(environment(seq=2, source="simulation", temp=41.0), "serial", "COM5"), "ok")
+        self.assertEqual(h.snapshot()["environment_nodes"][0]["source"], "simulation")
+
+    def test_invalid_packet_notifies_screen(self):
+        h, c = new_hub()
+        seen = []
+        h.subscribe(lambda kind, payload: seen.append(kind))
+        bad = status(seq=1)
+        del bad["transport"]
+        self.assertEqual(h.ingest(bad, "serial", "COM5"), "invalid")
+        self.assertEqual(seen, ["changed"])
+
+    def test_anchor_observations_keep_sources_apart(self):
+        h, c = new_hub()
+        h.ingest(anchor(node="gateway_01", seq=1, rssi=-80, source="device", boot="g1"), "serial", "COM5")
+        h.ingest(anchor(node="gateway_01", seq=1, rssi=-57, source="simulation", boot="g2"), "sim", "sim")
+        rows = [(a["source"], a["rssi_dbm"]) for a in h.snapshot()["anchor_observations"]]
+        self.assertEqual(rows, [("device", -80), ("simulation", -57)])
+
     def test_touch_bumps_version(self):
         h, c = new_hub()
         v = h.version

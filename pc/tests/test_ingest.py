@@ -36,6 +36,12 @@ class BrokenSerial:
 
 
 class LineTest(unittest.TestCase):
+    def test_unpaired_surrogate_is_not_data(self):
+        # JSON으로는 올바르지만 UTF-8로 못 바꾸는 문자열: 상태에 들어가면 화면·로그 출력이 계속 실패한다
+        line = json.dumps(status(seq=1))[:-1] + ', "x": "\\ud83d"}'
+        self.assertEqual(classify_line(line), ("text", None))
+        self.assertIsNotNone(parse_line(json.dumps(status(seq=1, boot="boot_\ud83d\ude00"))))  # 짝 맞으면 통과
+
     def test_parse_line(self):
         self.assertEqual(parse_line('{"a":1}\r\n'), {"a": 1})
         self.assertIsNone(parse_line("ets Jun  8 2016 00:22:57"))

@@ -133,6 +133,37 @@ class FirmwareNodeHeaderTest(unittest.TestCase):
         self.assertEqual({k: v["missing"] for k, v in streams.items()}, {"device": 0, "simulation": 0})
 
 
+@unittest.skipIf(CXX is None, "C++ 컴파일러 없음")
+class FirmwareTxQueueTest(unittest.TestCase):
+    """ble_tx.cpp: 사건·감지 패킷은 쌓인 일반 패킷 앞에 나가고, 광고 시작 실패는 다시 시도한다."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="squadlink-fw-")
+        exe = os.path.join(cls.tmp, "host_tx")
+        subprocess.run([CXX, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", HOST_DIR, "-I", FW_DIR,
+                        os.path.join(FW_DIR, "ble_tx.cpp"), os.path.join(HOST_DIR, "host_tx.cpp"),
+                        "-o", exe], check=True, capture_output=True, text=True)
+        out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout
+        cls.out = dict(line.split(" ", 1) for line in out.splitlines())
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_urgent_goes_ahead_of_queued_normal_packets(self):
+        self.assertEqual(self.out["active"], "AUUUBC")  # 광고 중인 A는 끊지 않음
+        self.assertEqual(self.out["idle"], "VVWX")     # 사건끼리는 들어온 순서
+
+    def test_full_queue_drops(self):
+        self.assertEqual((self.out["full"], self.out["drop"]), ("abcdef", "g"))
+        self.assertEqual(self.out["stats"].split()[-1], "dropped=1")
+
+    def test_adv_start_failure_is_retried_not_counted(self):
+        self.assertEqual(self.out["fail"], "F")
+        self.assertEqual(self.out["stats"].split()[:2], ["adv_fail=2", "windows=1"])
+
+
 class FirmwareSourceTest(unittest.TestCase):
     def test_only_json_out_prints_data_lines(self):
         # 데이터(JSON)는 json_out.cpp만 낸다. 다른 곳의 출력은 "# " 진단 줄이어야 한다(규격 2장).

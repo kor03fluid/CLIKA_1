@@ -26,9 +26,9 @@ from .ingest import classify_line
 from .schema import validate
 
 KST = timezone(timedelta(hours=9))
-TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped")
+TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped", "adv_fail")
 ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "table_full_skip",
-               "reports", "queue_full_skip")
+               "reports", "queue_full_skip", "scan_restarts")
 # 서버가 검사를 통과시킨 줄의 판정. 이 줄들의 obj만 노드별로 센다.
 ACCEPTED_RESULTS = ("ok", "late", "stale_boot", "dup", "shadowed")
 
@@ -255,11 +255,12 @@ def format_text(rep):
         lines += ["", "[환경 노드 송신량] stats 진단 줄 사이 차이 (est_adv는 추정치)"]
         lines.append(_table(
             ["node_id", "boot", "시작s", "구간s", "tx_mode", "앵커", "패킷", "분당", "창", "est_adv", "바이트",
-             "버림", "앵커수신", "앵커보고", "큐밀림"],
+             "버림", "광고실패", "앵커수신", "앵커보고", "큐밀림", "스캔재시작"],
             [[x["node_id"], x["boot_id"], x["from_uptime_s"], x["seconds"], x["tx_mode"], x["anchor_enabled"],
               x["tx_packets"], x["tx_packets_per_min"], x["tx_windows"], x["tx_est_adv_events"],
-              x["tx_payload_bytes"], x["tx_dropped"], x["anchor_rx_soldier"], x["anchor_reports"],
-              x["anchor_queue_full_skip"]] for x in rep["tx_intervals"]]))
+              x["tx_payload_bytes"], x["tx_dropped"], x["tx_adv_fail"], x["anchor_rx_soldier"],
+              x["anchor_reports"], x["anchor_queue_full_skip"], x["anchor_scan_restarts"]]
+             for x in rep["tx_intervals"]]))
     if rep["anchors"]:
         lines += ["", "[앵커 관측 RSSI]"]
         lines.append(_table(["anchor_id", "병사 노드", "source", "보고", "평균", "표준편차", "최소", "최대",

@@ -89,6 +89,27 @@ class JsonlLoggerTest(unittest.TestCase):
         self.assertEqual([r["text"] for r in read_jsonl(os.path.join(log.dir, "rx.jsonl"))], ["back"])
         log.close()
 
+    def test_lines_lost_in_buffer_are_counted(self):
+        # 디스크 오류는 보통 버퍼를 비울 때(flush) 난다. 그때 버퍼에 있던 줄을 버린 것으로 센다
+        log = JsonlLogger(self.base)
+
+        class FlushFails:
+            def write(self, s):
+                return len(s)
+
+            def flush(self):
+                raise OSError(28, "No space left on device")
+
+        log._rx.close()
+        log._rx = FlushFails()
+        with contextlib.redirect_stderr(io.StringIO()):
+            for i in range(5):
+                log.text(float(i), "serial", "p", "lost")
+            self.assertTrue(log.flush())
+        self.assertEqual(log.status()["dropped"], 5)
+        log._rx = open(os.devnull, "w")
+        log.close()
+
     def test_state_shows_log_status(self):
         log = JsonlLogger(self.base)
         app = App(Hub(logger=log, clock=FakeClock()))

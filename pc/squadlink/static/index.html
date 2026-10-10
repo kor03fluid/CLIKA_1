@@ -101,7 +101,8 @@ function renderState(s) {
       `버림 ${esc(tx.dropped)} · 앵커 수신 ${esc(a.rx_soldier)} · 앵커 보고 ${esc(a.reports)}</div>`;
   }).join("");
   const v = s.virtual || {};
-  $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` : "중지";
+  $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` +
+    (v.note ? ` · 주의: ${v.note}` : "") : "중지";
 
   $("soldiers").innerHTML = "<tr><th>분대원</th><th>장치</th><th>연결</th><th>출처</th><th>모드</th>" +
     "<th>심박</th><th>움직임</th><th>위치</th><th>마지막 수신</th><th>진행 중 사건</th></tr>" +
@@ -209,12 +210,14 @@ $("ccmd").addEventListener("keydown", (e) => { if (e.key === "Enter") sendCmd();
 fetch("/api/scenarios").then((r) => r.json()).then((list) => {
   $("scenario").innerHTML = list.map((n) => `<option ${n === "demo" ? "selected" : ""}>${esc(n)}</option>`).join("");
 });
-fetch("/api/events").then((r) => r.json()).then((list) => { list.forEach(upsertEvent); renderEvents(); });
+// 사건 목록은 SSE가 (다시) 연결될 때마다 받는다. 끊긴 동안 생기거나 바뀐 사건을 놓치지 않게.
+const loadEvents = () => fetch("/api/events?limit=500").then((r) => r.json())
+  .then((list) => { list.forEach(upsertEvent); renderEvents(); }).catch(() => {});
 
 const es = new EventSource("/api/stream");
 es.addEventListener("state", (m) => renderState(JSON.parse(m.data)));
 es.addEventListener("event", (m) => { upsertEvent(JSON.parse(m.data)); renderEvents(); });
-es.onopen = () => { $("conn").textContent = "서버 연결"; $("conn").className = "tag ok"; };
+es.onopen = () => { $("conn").textContent = "서버 연결"; $("conn").className = "tag ok"; loadEvents(); };
 es.onerror = () => { $("conn").textContent = "서버 끊김"; $("conn").className = "tag crit"; };
 </script>
 </body>

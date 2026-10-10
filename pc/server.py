@@ -65,6 +65,9 @@ def parse_args(argv=None):
     p.add_argument("--allow-origin", action="append", default=[], metavar="ORIGIN",
                    help="쓰기 API(POST)를 허용할 다른 출처. 관제 UI를 별도 개발 서버에서 띄울 때 "
                         "(예: http://localhost:5173). 여러 번 지정 가능")
+    p.add_argument("--allow-host", action="append", default=[], metavar="NAME",
+                   help="IP 주소·localhost·*.local 말고 이 서버를 부르는 이름(예: 노트북 이름)으로 접속해 "
+                        "확인·종료 버튼을 쓸 때 그 이름. 여러 번 지정 가능")
     return p.parse_args(argv)
 
 
@@ -90,7 +93,7 @@ def main(argv=None):
         sys.exit(f"--roster 설정 오류: {e}")
     logger = JsonlLogger(args.log_dir, meta=vars(args))
     hub = Hub(logger=logger, roster=roster, env_nodes=env_nodes)
-    app = App(hub, allow_origins=args.allow_origin)
+    app = App(hub, allow_origins=args.allow_origin, allow_hosts=args.allow_host)
 
     for port in args.serial:
         r = SerialReader(port, args.baud, hub, logger)
@@ -106,6 +109,9 @@ def main(argv=None):
                              "loop": args.virtual_loop, "loss_rate": args.loss_rate})
         except ValueError as e:
             sys.exit(f"--virtual 설정 오류: {e}")
+        note = app.virtual_status().get("note")
+        if note:
+            print(f"[virtual] 주의: {note}", file=sys.stderr, flush=True)
 
     threading.Thread(target=app.ticker, daemon=True, name="tick").start()
     httpd = serve(app, args.host, args.port)

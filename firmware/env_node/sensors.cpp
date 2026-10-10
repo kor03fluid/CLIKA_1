@@ -12,6 +12,10 @@ static bool s_heatOnset = false;
 static uint32_t s_lastDhtMs = 0;
 static uint32_t s_lastLightMs = 0;
 static float s_virtualTemp = NAN;
+static bool s_realHeat = false;   // vtemp 동안 맡아 둔 실측 열 노출 상태
+static uint8_t s_dhtFails = 0;    // 연속 읽기 실패 수
+static float s_dhtTemp = NAN;     // 마지막으로 읽은 실측값
+static float s_dhtHum = NAN;
 
 // 소리·불꽃·충격은 짧은 펄스라 인터럽트로 래치한다.
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
@@ -78,10 +82,19 @@ void sensorsPoll(uint32_t now) {
     s_lastDhtMs = now;
     float t = s_dht.readTemperature();
     float h = s_dht.readHumidity();
-    s_cur.dht_ok = !isnan(t) && !isnan(h);
-    s_cur.humidity = s_cur.dht_ok ? h : NAN;
+    if (!isnan(t) && !isnan(h)) {
+      s_dhtFails = 0;
+      s_dhtTemp = t;
+      s_dhtHum = h;
+    } else if (s_dhtFails < 255) {
+      s_dhtFails++;
+    }
+    // DHT11은 가끔 한 번씩 읽기(체크섬)가 실패한다. 한 번 실패로 null·unavailable을 보내면 패킷이 두 번 더
+    // 나가므로, 연달아 DHT_FAIL_LIMIT번 실패해야 측정 불가로 본다(그동안은 직전 값).
+    s_cur.dht_ok = s_dhtFails < DHT_FAIL_LIMIT && !isnan(s_dhtTemp);
+    s_cur.humidity = s_cur.dht_ok ? s_dhtHum : NAN;
     s_cur.virtual_temp = !isnan(s_virtualTemp);
-    s_cur.temp_c = s_cur.virtual_temp ? s_virtualTemp : (s_cur.dht_ok ? t : NAN);
+    s_cur.temp_c = s_cur.virtual_temp ? s_virtualTemp : (s_cur.dht_ok ? s_dhtTemp : NAN);
     updateHeat();
   }
 
@@ -131,9 +144,15 @@ bool sensorsTakeHeatOnset() {
 }
 
 void sensorsSetVirtualTemp(float c) {
-  if (isnan(c) && !isnan(s_virtualTemp)) {
-    // 가상값으로 생긴 열 노출 상태를 지운다. 실측이 성공하면 다음 측정에서 다시 판정된다.
+  if (!isnan(c) && isnan(s_virtualTemp)) {
+    // 가상 시험 시작: 실측 열 노출 상태를 맡아 두고 가상값으로 새로 판정한다
+    // (실측이 이미 더워도 가상 사건이 생기고, 끝난 뒤 같은 실측 노출로 사건이 또 생기지 않게).
+    s_realHeat = s_cur.heat;
     s_cur.heat = false;
+    s_heatOnset = false;
+  } else if (isnan(c) && !isnan(s_virtualTemp)) {
+    // 가상 시험 끝: 가상값으로 생긴 상태를 버리고 실측 상태로 돌아간다. 다음 측정에서 이어서 판정된다.
+    s_cur.heat = s_realHeat;
     s_heatOnset = false;
   }
   s_virtualTemp = c;

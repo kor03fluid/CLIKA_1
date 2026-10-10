@@ -18,6 +18,20 @@ def _reject_constant(name):
     raise ValueError("non-standard JSON constant: " + name)
 
 
+def has_surrogate(v):
+    """짝 없는 서로게이트("\\ud83d" 같은 JSON 이스케이프)가 든 문자열이 있는가.
+
+    JSON으로는 올바르지만 UTF-8로 바꿀 수 없어서, 상태에 들어가면 /api/state·SSE·로그 출력이 계속 실패한다.
+    """
+    if isinstance(v, str):
+        return any("\ud800" <= ch <= "\udfff" for ch in v)
+    if isinstance(v, dict):
+        return any(has_surrogate(k) or has_surrogate(x) for k, x in v.items())
+    if isinstance(v, list):
+        return any(has_surrogate(x) for x in v)
+    return False
+
+
 def parse_line(line):
     line = line.strip()
     if not line.startswith("{"):
@@ -26,7 +40,9 @@ def parse_line(line):
         obj = json.loads(line, parse_constant=_reject_constant)
     except ValueError:
         return None
-    return obj if isinstance(obj, dict) else None
+    if not isinstance(obj, dict) or has_surrogate(obj):
+        return None
+    return obj
 
 
 def classify_line(line):

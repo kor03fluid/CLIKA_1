@@ -34,6 +34,9 @@ static bool s_scanRetryPending = false;  // 시작 실패 후 기다리는 중(0
 static uint32_t s_scanRetryAt = 0;
 static uint32_t s_lastReport = 0;
 static bool s_enabled = true;
+static uint32_t s_scanStartedAt = 0;
+static bool s_queueWait = false;  // 큐 자리가 없어 보고를 미루는 중
+static uint32_t s_queueRetryAt = 0;
 
 // now가 then보다 앞서면(다른 태스크가 더 늦은 millis()를 기록) 0으로 본다
 static uint32_t elapsedMs(uint32_t now, uint32_t then) {
@@ -120,10 +123,10 @@ struct Due {
   uint32_t waited;   // 마지막 보고 후 경과
 };
 
-static void sendOne(const SoldierObs& o, uint32_t now) {
+static void sendOne(const SoldierObs& o) {
   PktAnchorObs p = {};
   nodeFillHeader(p.h, PKT_ANCHOR_OBS, 0);  // 실제 관측이므로 항상 device
-  uint32_t age = elapsedMs(now, o.last_ms);
+  uint32_t age = elapsedMs(p.h.uptime_ms, o.last_ms);  // 이 패킷의 uptime_ms 기준(서버가 수신 시각에서 뺀다)
   p.observed_node = o.id;
   p.observed_boot = o.boot_id;
   p.observed_seq = o.last_seq;
@@ -150,14 +153,22 @@ bool anchorEnabled() { return s_enabled && s_scan; }
 
 void anchorLoop(uint32_t now) {
   if (!s_enabled) return;
+  // 스택이 스캔 시작 실패를 알리지 않으면 끝 콜백이 오지 않아 영영 멈춘다(BLE 라이브러리는 로그만 남김)
+  if (s_scanning && now - s_scanStartedAt > ANCHOR_SCAN_CYCLE_S * 1000UL + ANCHOR_SCAN_WATCHDOG_MS) {
+    s_scan->stop();
+    s_scanning = false;
+    s_stats.scan_restarts++;
+  }
   if (!s_scanning && (!s_scanRetryPending || (int32_t)(now - s_scanRetryAt) >= 0)) {
     s_scan->clearResults();
     s_scanning = s_scan->start(ANCHOR_SCAN_CYCLE_S, onScanDone, false);
+    s_scanStartedAt = now;
     s_scanRetryPending = !s_scanning;
     if (s_scanRetryPending) s_scanRetryAt = now + ANCHOR_SCAN_RETRY_MS;
   }
 
   if (now - s_lastReport < ANCHOR_MIN_REPORT_MS) return;  // 보고 묶음 사이 최소 간격
+  if (s_queueWait && (int32_t)(now - s_queueRetryAt) < 0) return;
 
   Due due[ANCHOR_MAX_SOLDIERS];
   uint8_t n = 0;
@@ -185,9 +196,16 @@ void anchorLoop(uint32_t now) {
   if (n == 0) return;
 
   // 큐 자리만큼만 보낸다(병사 수가 큐보다 많아도 멈추지 않음). 남은 병사는 다음 차례에 먼저 나간다.
-  uint8_t room = bleTxFree();
-  if (room < n) s_stats.queue_full_skip++;
-  if (room == 0) return;
+  // 사건·감지 패킷이 바로 들어갈 수 있게 몇 칸은 남겨 둔다.
+  uint8_t freeSlots = bleTxFree();
+  uint8_t room = freeSlots > ANCHOR_TX_RESERVE ? freeSlots - ANCHOR_TX_RESERVE : 0;
+  if (room < n && !s_queueWait) s_stats.queue_full_skip++;  // 미룬 묶음마다 한 번만 센다
+  if (room == 0) {
+    s_queueWait = true;  // loop마다 표를 다시 훑지 않고 잠시 뒤에 본다
+    s_queueRetryAt = now + ANCHOR_QUEUE_RETRY_MS;
+    return;
+  }
+  s_queueWait = false;
   for (uint8_t i = 1; i < n; i++) {  // 우선순위 정렬(작은 배열이라 삽입 정렬)
     Due d = due[i];
     int j = i - 1;
@@ -198,7 +216,7 @@ void anchorLoop(uint32_t now) {
     due[j + 1] = d;
   }
   uint8_t sent = n < room ? n : room;
-  for (uint8_t i = 0; i < sent; i++) sendOne(due[i].obs, t);
+  for (uint8_t i = 0; i < sent; i++) sendOne(due[i].obs);
 
   // 보낸 병사만 보고 완료로 표시한다. 보고 뒤에 받은 표본 수는 남긴다.
   portENTER_CRITICAL(&s_mux);

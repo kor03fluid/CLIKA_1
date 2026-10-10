@@ -114,6 +114,41 @@ class WebTest(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual(hdrs.get("Access-Control-Allow-Origin"), "http://localhost:5173")
 
+    def test_dns_rebinding_host_is_not_same_origin(self):
+        # 남의 도메인이 이 서버를 가리키게 해도(같은 Origin·Host) 쓰기는 막는다. IP·localhost·지정한 이름만 허용
+        self.hub.ingest(event(seq=1), "serial", "p")
+        port = self.httpd.server_address[1]
+        js = {"Content-Type": "application/json"}
+        for name in ("evil.example", "mylaptop"):
+            host = "%s:%d" % (name, port)
+            code, _, _ = self.raw_post(SOS_PATH + "/ack", "{}", dict(js, Origin="http://" + host, Host=host))
+            self.assertEqual(code, 403, name)
+        self.app.allow_hosts = {"mylaptop"}
+        host = "mylaptop:%d" % port
+        self.assertEqual(self.raw_post(SOS_PATH + "/ack", "{}", dict(js, Origin="http://" + host, Host=host))[0], 200)
+        for host in ("localhost:%d" % port, "[::1]:%d" % port, "squad.local:%d" % port):
+            code, _, _ = self.raw_post(SOS_PATH + "/ack", "{}", dict(js, Origin="http://" + host, Host=host))
+            self.assertEqual(code, 200, host)
+
+    def test_chunked_and_bad_unicode_bodies_are_rejected(self):
+        c = http.client.HTTPConnection("127.0.0.1", self.httpd.server_address[1], timeout=5)
+        c.putrequest("POST", "/api/virtual")
+        c.putheader("Content-Type", "application/json")
+        c.putheader("Transfer-Encoding", "chunked")
+        c.endheaders()
+        body = b'{"enabled": false}'
+        c.send(b"%x\r\n%s\r\n0\r\n\r\n" % (len(body), body))
+        r = c.getresponse()
+        r.read()
+        c.close()
+        self.assertEqual(r.status, 411)
+        self.assertFalse(self.app.virtual_status()["running"])  # 빈 본문(기본 enabled)으로 시작하지 않음
+        raw = '{"soldier_id": "soldier_01", "assigned_node_id": "halo_01", "name": "\\ud83d"}'
+        code, _, _ = self.raw_post("/api/roster", raw, {"Content-Type": "application/json"})
+        self.assertEqual(code, 400)
+        self.assertIsNone(self.hub.roster["soldier_01"].get("name"))
+        self.assertEqual(self.get("/api/state")["schema_version"], "1.0")  # 상태 출력은 계속 된다
+
     def test_preflight_only_for_allowed_origins(self):
         def preflight(origin, method="POST"):
             req = urllib.request.Request(self.base + "/api/cmd", method="OPTIONS", headers={

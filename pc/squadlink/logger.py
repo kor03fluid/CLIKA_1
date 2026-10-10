@@ -21,14 +21,15 @@ class JsonlLogger:
         stamp = time.strftime("%Y%m%d-%H%M%S")
         self.dir = os.path.join(base_dir, stamp)
         os.makedirs(self.dir, exist_ok=True)
-        self._rx = open(os.path.join(self.dir, "rx.jsonl"), "a", encoding="utf-8")
-        self._ev = open(os.path.join(self.dir, "events.jsonl"), "a", encoding="utf-8")
+        # 입력에서 거르지만, UTF-8로 못 바꾸는 글자가 들어와도 줄을 잃지 않게 이스케이프해 쓴다
+        self._rx = open(os.path.join(self.dir, "rx.jsonl"), "a", encoding="utf-8", errors="backslashreplace")
+        self._ev = open(os.path.join(self.dir, "events.jsonl"), "a", encoding="utf-8", errors="backslashreplace")
         with open(os.path.join(self.dir, "session.json"), "w", encoding="utf-8") as f:
             json.dump(dict(meta or {}, started=time.time()), f, ensure_ascii=False, indent=2)
         self._q = queue.Queue()
         self._closed = False
         self.error = None   # 마지막 쓰기 오류
-        self.dropped = 0    # 쓰지 못하고 버린 줄
+        self.dropped = 0    # 쓰지 못하고 버린 줄(추정: 실패한 flush 전에 버퍼에 있던 줄 포함)
         self._writer = threading.Thread(target=self._run, daemon=True, name="log-writer")
         self._writer.start()
 
@@ -44,15 +45,17 @@ class JsonlLogger:
         self.error = msg
 
     def _flush(self, dirty):
-        for f in dirty:
+        """dirty: 파일 -> 마지막 flush 뒤 버퍼에 쓴 줄 수."""
+        for f, pending in dirty.items():
             try:
                 f.flush()
-            except Exception as e:  # 버퍼에 있던 줄은 잃는다(몇 줄인지는 알 수 없음)
+            except Exception as e:  # 디스크 오류는 대개 여기서 난다. 버퍼에 있던 줄을 잃은 것으로 센다
+                self.dropped += pending
                 self._failed(e)
         dirty.clear()
 
     def _run(self):
-        dirty = set()
+        dirty = {}
         while True:
             item = self._q.get()
             if item is _STOP:
@@ -68,9 +71,10 @@ class JsonlLogger:
                 except (TypeError, ValueError) as e:  # 직렬화할 수 없는 값
                     line = json.dumps({"log_error": str(e)})
                 fp.write(line + "\n")
-                dirty.add(fp)
+                dirty[fp] = dirty.get(fp, 0) + 1
             except Exception as e:  # OSError(디스크 가득 참) 등: 이 줄을 버리고 계속 돈다
-                self.dropped += 1
+                # 버퍼를 비우다 실패한 것이므로 앞서 버퍼에 있던 줄도 잃은 것으로 센다
+                self.dropped += 1 + dirty.pop(fp, 0)
                 self._failed(e)
             if self._q.empty():
                 self._flush(dirty)

@@ -3,19 +3,21 @@ from collections import Counter
 
 from helpers import new_hub
 
-from squadlink.virtual import SCENARIOS, Simulator, scenario_length
+from squadlink.virtual import SCENARIOS, Simulator, scenario_length, speed_note
 
 
-def run(scenario, nodes=None, seed=1, until=None, hook=None):
+def run(scenario, nodes=None, seed=1, until=None, hook=None, speed=1):
+    """clock.t는 실제 시간, 가상 시각은 그 speed배(VirtualRunner와 같음)."""
     hub, clock = new_hub()
-    sim = Simulator(lambda o: hub.ingest(o, "sim", "sim"), scenario=scenario, nodes=nodes, seed=seed)
-    end = until if until is not None else scenario_length(scenario)
+    sim = Simulator(lambda o: hub.ingest(o, "sim", "sim"), scenario=scenario, nodes=nodes, seed=seed,
+                    speed=speed)
+    end = (until if until is not None else scenario_length(scenario)) / speed
     while clock.t < end:
-        clock.t = round(clock.t + 0.1, 1)
-        sim.step(clock.t)
+        clock.t = round(clock.t + 0.05, 2)
+        sim.step(clock.t * speed)
         hub.tick()
         if hook:
-            hook(hub, clock.t)
+            hook(hub, round(clock.t * speed, 2))
     return hub
 
 
@@ -53,6 +55,23 @@ class SimulatorTest(unittest.TestCase):
         st, ev = seen[100.0]  # 5 복구: 병사 02 연결, SOS 사건 유지
         self.assertEqual(st["soldier_02"], "connected")
         self.assertEqual(ev[0], ("sos", "halo_01", "acknowledged"))
+
+    def test_demo_loss_and_resume_at_speed(self):
+        # 배속이어도 선언 주기를 실제 간격으로 줄이므로 두절이 보이고, 재개하면 바로 새 상태를 보낸다
+        for speed in (1, 2, 3):
+            seen = {}
+
+            def hook(hub, t):
+                if t in (84.0, 85.5):
+                    seen[t] = states(hub)["soldier_02"]
+
+            with self.subTest(speed=speed):
+                hub = run("demo", hook=hook, speed=speed)
+                self.assertEqual(seen, {84.0: "lost", 85.5: "connected"})
+                self.assertEqual(hub.nodes["halo_02"].heartbeat_interval_ms, round(10000 / speed))
+                self.assertIsNone(speed_note("demo", speed))
+        self.assertIn("두절로 보이지 않습니다", speed_note("demo", 4))
+        self.assertIsNone(speed_note("normal", 10))  # 송신 중단이 없는 시나리오
 
     def test_integration_scenario_covers_the_additional_checks(self):
         hub = run("all")

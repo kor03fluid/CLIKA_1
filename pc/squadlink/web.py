@@ -16,9 +16,12 @@ event_id에 들어가는 ":"는 그대로 써도 되고, "/"가 들어 있으면
 
 읽기(GET)는 어느 출처에서나 허용한다. 쓰기(POST)는 같은 출처, Origin 헤더가 없는 클라이언트(curl 등),
 --allow-origin으로 지정한 출처만 받고, Content-Type은 application/json이어야 한다. 그래서 같은 Wi-Fi의
-브라우저에서 열린 다른 웹페이지가 SOS 해결 처리나 장치 명령을 몰래 보낼 수 없다.
+브라우저에서 열린 다른 웹페이지가 SOS 해결 처리나 장치 명령을 몰래 보낼 수 없다. 같은 출처로 인정하는 Host는
+IP 주소·localhost·*.local과 --allow-host로 지정한 이름뿐이다(DNS 리바인딩으로 남의 도메인이 이 서버를
+가리키게 해 같은 출처처럼 보내는 것을 막는다).
 """
 
+import ipaddress
 import json
 import math
 import os
@@ -28,6 +31,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+from .ingest import has_surrogate
 from .virtual import SCENARIOS, VirtualRunner
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
@@ -35,10 +39,30 @@ STATE_MIN_GAP_S = 0.25
 MAX_BODY_BYTES = 64 * 1024
 
 
+def host_name(host_header):
+    """Host 헤더에서 포트를 뗀 이름(소문자). IPv6는 대괄호를 뗀다."""
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):
+        return h[1:h.find("]")] if "]" in h else ""
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+
+
+def trusted_host(name, extra=()):
+    if not name:
+        return False
+    try:
+        ipaddress.ip_address(name)
+        return True
+    except ValueError:
+        pass
+    return (name == "localhost" or name.endswith((".localhost", ".local")) or name in extra)
+
+
 class App:
-    def __init__(self, hub, allow_origins=()):
+    def __init__(self, hub, allow_origins=(), allow_hosts=()):
         self.hub = hub
         self.allow_origins = {o.rstrip("/") for o in allow_origins}  # 쓰기를 허용할 다른 출처
+        self.allow_hosts = {h.strip().lower() for h in allow_hosts if h.strip()}  # 같은 출처로 인정할 호스트 이름
         self.readers = {}  # port -> SerialReader
         self.replayer = None
         self.virtual = None
@@ -130,8 +154,11 @@ def make_handler(app):
             if not origin:
                 return True
             origin = origin.rstrip("/")
+            if origin in app.allow_origins:
+                return True
             host = self.headers.get("Host", "")
-            return origin in ("http://" + host, "https://" + host) or origin in app.allow_origins
+            same = origin in ("http://" + host, "https://" + host)
+            return same and trusted_host(host_name(host), app.allow_hosts)
 
         def _cors(self):
             if self.command == "GET":
@@ -160,6 +187,8 @@ def make_handler(app):
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype != "application/json":
                 return None, 415, "Content-Type must be application/json"
+            if self.headers.get("Transfer-Encoding"):  # 청크 본문은 읽지 않는다(빈 본문으로 오해하지 않게)
+                return None, 411, "Content-Length required"
             try:
                 n = int(self.headers.get("Content-Length") or 0)
             except ValueError:
@@ -174,6 +203,8 @@ def make_handler(app):
                 return None, 400, "invalid json"
             if not isinstance(obj, dict):
                 return None, 400, "body must be a JSON object"
+            if has_surrogate(obj):
+                return None, 400, "invalid unicode (unpaired surrogate)"
             return obj, 200, None
 
         def do_OPTIONS(self):

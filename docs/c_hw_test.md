@@ -22,12 +22,12 @@
 |---|---|---|
 | 부팅 | 리셋 | `# {"type":"boot",...}` 진단 줄 |
 | DHT11 | 켜고 기다림 | 약 3초 뒤 첫 `environment`. `air_temperature_c`·`humidity_pct`가 숫자, `sensor_status.dht11: "ok"` |
-| DHT11 분리 | DATA 선 뽑기 | 온도·습도 `null`, `dht11: "unavailable"` |
+| DHT11 분리 | DATA 선 뽑기 | 약 6초(3회 연속 실패) 뒤 온도·습도 `null`, `dht11: "unavailable"` |
 | 조도 | 손으로 가렸다 뗌 | `light_raw`가 400 이상 바뀌면 적응 모드에서 송신(값 변화 송신은 최소 3초 간격) |
 | 소리 | 손뼉 | `sound_detected: true` 패킷이 바로 나감(3회 반복 광고, USB에는 한 줄) |
 | 충격 | 책상 두드림 | `shock_detected: true` |
 | 불꽃 | 안전 수칙에 따라 짧게 | `flame_detected: true`, 반응 중에는 주기 10초 |
-| 리드스위치 | 자석 붙였다 뗌 | `reed_closed` true/false가 바뀔 때마다 송신 |
+| 리드스위치 | 자석 붙였다 뗌 | `reed_closed` true/false가 바뀔 때마다 바로 송신(3회 반복) |
 | 열 노출 | `vtemp 38` → `vtemp off` | `event`(`heat_exposure`)와 `environment`가 `source: "simulation"`. 끄면 다시 `device` |
 | 명령 | `stats`, `mode fixed`, `anchor off` | `stats` 진단 줄의 `tx_mode`·`anchor_enabled`가 바뀜 |
 
@@ -58,7 +58,8 @@ python report.py logs/<시작 시각>
 
 - **노드별 수신**: 노드마다 누락·손실%. 환경 노드의 USB 줄은 누락 0이어야 한다(0이 아니면 펌웨어 쪽 문제).
 - **경로별 수신**: 게이트웨이가 환경 노드 BLE 패킷도 받으면 `env_01 / gateway_01` 줄에 USB 송신분 대비 수신률이 나온다.
-- **환경 노드 송신량**: `버림`(큐 가득 참)·`큐밀림`(앵커 보고 미룸)이 0인지.
+- **환경 노드 송신량**: `버림`(큐 가득 참)·`광고실패`·`스캔재시작`이 0인지, `큐밀림`(자리가 없어 앵커 보고를 미룬 묶음 수)이
+  얼마나 되는지.
 
 ## 6. 송신량·소비전류 비교
 

@@ -2,10 +2,8 @@
 #include "config.h"
 #include <Arduino.h>
 #include <DHT.h>
-#include <RBD_LightSensor.h>
 
 static DHT s_dht(PIN_DHT, DHT11);
-static RBD::LightSensor* s_light = nullptr;
 
 // ----- 두 태스크(센싱·보고)가 같이 쓰는 값: s_lock 안에서만(잠금 안에서는 계산·복사만, 입출력 없음) -----
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -63,7 +61,7 @@ static void applyInterrupts(uint8_t want) {
 void sensorsBegin(bool virtualMode, uint8_t realUse) {
   analogReadResolution(12);  // light_raw는 12bit 원시값(0~4095)
   s_dht.begin();
-  s_light = new RBD::LightSensor(PIN_LIGHT);  // getRawValue()만 쓴다(백분율 계산은 10bit 기준이라 안 씀)
+  pinMode(PIN_LIGHT, INPUT);  // 조도 분압 출력(아날로그). 원시값만 쓰므로 별도 라이브러리 없이 analogRead
   pinMode(PIN_SOUND, INPUT);
   pinMode(PIN_FLAME, INPUT);
   pinMode(PIN_SHOCK, INPUT);
@@ -111,7 +109,7 @@ void sensorsPoll(uint32_t now) {
     }
     if (lightDue) {
       s.has_light = true;
-      s.light_raw = (uint16_t)s_light->getRawValue();
+      s.light_raw = (uint16_t)analogRead(PIN_LIGHT);
     }
     s.reed_closed = (use & DET_REED) ? digitalRead(PIN_REED) != REED_OPEN_LEVEL : true;
     s.flame_active = (use & DET_FLAME) && digitalRead(PIN_FLAME) == FLAME_ACTIVE_LEVEL;

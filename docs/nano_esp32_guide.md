@@ -28,10 +28,9 @@
 ### 2-2. 라이브러리
 
 1. 받은 ZIP을 풀면 `CLIKA_1-main` 폴더가 생긴다.
-2. 그 안의 폴더 세 개를 `문서\Arduino\libraries` 아래로 **폴더째** 복사한다. `libraries` 폴더가 없으면 만든다.
+2. 그 안의 폴더 두 개를 Arduino `libraries` 아래로 **폴더째** 복사한다(위치는 파일 → 기본 설정 → 스케치북 위치 아래 `libraries`, OneDrive 아래일 수 있음).
    - `DHT-sensor-library`
    - `Adafruit_Sensor`
-   - `RBD_LightSensor`
 3. Arduino IDE를 껐다 켠다.
 
 ## 3. 펌웨어 열기와 보드 설정

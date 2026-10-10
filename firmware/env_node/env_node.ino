@@ -17,6 +17,7 @@ static uint32_t s_lastEnvTx = 0;
 static uint32_t s_lastDetectTx = 0;
 static bool s_sentOnce = false;
 static bool s_heatPending = false;
+static bool s_heatPendingSim = false;  // 사건이 생긴 시점의 출처(대기 중에 vtemp off 해도 가상으로 남게)
 static PktEnvironment s_lastSent = {};
 static uint16_t s_eventNo[5] = {};  // EventType별 사건 번호(부팅마다 1부터)
 
@@ -112,11 +113,11 @@ static void sendEnv(uint32_t now, bool urgent) {
 }
 
 // ----- event (환경 열 노출 주의) -----
-static bool sendEvent(uint8_t type) {
+static bool sendEvent(uint8_t type, bool simulation) {
   if (bleTxFree() == 0) return false;  // 다음 loop에서 다시
   PktEvent p = {};
   uint8_t flags = PKT_FLAG_EVENT;
-  if (sensorsLatest().virtual_temp) flags |= PKT_FLAG_SIMULATION;  // 가상 온도로 생긴 사건은 가상
+  if (simulation) flags |= PKT_FLAG_SIMULATION;  // 가상 온도로 생긴 사건은 가상
   nodeFillHeader(p.h, PKT_EVENT, flags);
   p.event_type = type;
   p.mode = MODE_NORMAL;  // 환경 노드에는 기도비닉 모드가 없다
@@ -128,7 +129,11 @@ static bool sendEvent(uint8_t type) {
 
 static bool changedEnough(const PktEnvironment& now, const PktEnvironment& last) {
   if (now.sensor_status != last.sensor_status || now.heartbeat_s != last.heartbeat_s) return true;
-  if (now.detected != last.detected) return true;  // 리드 상태·불꽃 현재 반응 변화
+  // 감지 값 중 리드(현재 상태)만 비교한다. 소리·충격·불꽃은 래치라 감지 송신 다음 비교에서
+  // 참→거짓으로 보여 쓸데없는 패킷이 한 번 더 나간다. 감지는 sensorsPendingDetections()가,
+  // 불꽃이 계속되는 동안은 선언 주기(10초)가 맡는다.
+  auto reed = [](const PktEnvironment& p) { return (p.detected >> ENV_DT_REED_CLOSED) & 3; };
+  if (reed(now) != reed(last)) return true;
   if ((now.air_temp_c10 == ENV_TEMP_NULL) != (last.air_temp_c10 == ENV_TEMP_NULL)) return true;
   if (now.air_temp_c10 != ENV_TEMP_NULL && abs(now.air_temp_c10 - last.air_temp_c10) >= DELTA_TEMP_C * 10)
     return true;
@@ -144,8 +149,11 @@ static bool changedEnough(const PktEnvironment& now, const PktEnvironment& last)
 // 송신 정책. 사건은 두 모드 모두 즉시. fixed: 환경은 고정 주기만(감지는 다음 패킷에 래치).
 // adaptive: 감지 즉시(반복)·값 변화 시·선언한 주기마다.
 static void envTxPolicy(uint32_t now) {
-  if (sensorsTakeHeatOnset()) s_heatPending = true;
-  if (s_heatPending && sendEvent(EV_HEAT_EXPOSURE)) s_heatPending = false;
+  if (sensorsTakeHeatOnset()) {
+    s_heatPending = true;
+    s_heatPendingSim = sensorsLatest().virtual_temp;
+  }
+  if (s_heatPending && sendEvent(EV_HEAT_EXPOSURE, s_heatPendingSim)) s_heatPending = false;
 
   if (!s_sentOnce) {
     if (now > DHT_READ_MS + 1000) sendEnv(now, false);  // DHT 안정화·두 번째 측정 후

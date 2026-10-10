@@ -211,6 +211,17 @@ class EventTest(unittest.TestCase):
         self.assertEqual([e["source"] for e in h.list_events()], ["simulation"])
         self.assertEqual(soldier(h, "soldier_01")["source"], "device")
 
+    def test_shadowed_repeats_are_deduplicated(self):
+        # 반복 광고(같은 seq)는 가려진 출처에서도 한 번만 보고로 센다
+        h, c = new_hub()
+        h.ingest(status(seq=1, source="device"), "serial", "COM5")
+        for _ in range(3):
+            self.assertEqual(h.ingest(event(seq=2, source="simulation"), "sim", "sim"), "shadowed")
+        (ev,) = h.list_events()
+        self.assertEqual((ev["source"], ev["report_count"]), ("simulation", 1))
+        h.ingest(event(seq=3, source="simulation"), "sim", "sim")  # 다른 패킷의 같은 사건은 재보고
+        self.assertEqual(h.list_events()[0]["report_count"], 2)
+
     def test_list_events_limit(self):
         h, c = new_hub()
         for i in range(1, 4):
@@ -231,6 +242,25 @@ class SourceTest(unittest.TestCase):
         c.t = 33  # 실측이 두절 기준만큼 조용하면 가상이 이어받는다
         self.assertEqual(h.ingest(status(seq=3, source="simulation"), "sim", "sim"), "ok")
         self.assertEqual(soldier(h, "soldier_01")["source"], "simulation")
+
+    def test_shadowed_stream_has_no_false_missing_after_takeover(self):
+        # 가려진 동안의 번호도 추적하므로, 가상이 이어받을 때 그 사이 번호가 누락으로 잡히지 않는다
+        h, c = new_hub()
+        h.ingest(status(seq=1, source="simulation"), "sim", "sim")
+        h.ingest(status(seq=1, source="device", boot="boot_d"), "serial", "COM5")
+        for seq in range(2, 6):
+            c.t += 10
+            h.ingest(status(seq=seq, source="device", boot="boot_d"), "serial", "COM5")
+            self.assertEqual(h.ingest(status(seq=seq, source="simulation"), "sim", "sim"), "shadowed")
+        c.t += 33  # 실측 두절 → 가상이 이어받는다
+        self.assertEqual(h.ingest(status(seq=6, source="simulation"), "sim", "sim"), "ok")
+        self.assertEqual(h.snapshot()["nodes"]["halo_01"]["streams"]["simulation"]["missing"], 0)
+
+    def test_touch_bumps_version(self):
+        h, c = new_hub()
+        v = h.version
+        h.touch()
+        self.assertEqual(h.version, v + 1)
 
     def test_anchor_observation_from_other_source_does_not_switch(self):
         h, c = new_hub()

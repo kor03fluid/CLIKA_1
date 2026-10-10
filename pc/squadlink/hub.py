@@ -196,6 +196,11 @@ class Hub:
         self.version += 1
         self._notify("changed", self.version)
 
+    def touch(self):
+        """허브 밖 상태(가상 노드 실행, 시리얼 연결, 재생 종료)가 바뀌었을 때 SSE가 새 상태를 보내게 한다."""
+        with self.lock:
+            self._changed()
+
     # ----- 분대원·환경 노드 등록 -----
     def soldier_for(self, node_id):
         for s in self.roster.values():
@@ -319,8 +324,12 @@ class Hub:
             else:
                 n.c["shadowed"] += 1
                 self.totals["shadowed"] += 1
-                if ptype == "event":  # 사건은 출처 라벨을 달고 계속 기록한다
-                    self._record_event(pkt, input_, wall, late=False)
+                # 가려진 출처도 번호는 추적한다. 반복 광고 중복이 사건 보고 수를 부풀리지 않고,
+                # 나중에 이 출처가 표시 출처가 되어도 가려졌던 동안의 번호가 누락으로 잡히지 않는다.
+                # 중복이어도 결과는 "shadowed"로 둔다(재생은 가려진 줄을 다시 흘리지 않는다).
+                order = self._sequence(n, stream, pkt, now)
+                if ptype == "event" and order != "dup":  # 사건은 출처 라벨을 달고 계속 기록한다
+                    self._record_event(pkt, input_, wall, late=order != "new")
                 return "shadowed", errors, warnings
 
         order = self._sequence(n, stream, pkt, now)

@@ -1,3 +1,5 @@
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -8,6 +10,7 @@ from helpers import FakeClock, event, status
 
 from squadlink.hub import Hub
 from squadlink.logger import JsonlLogger
+from squadlink.web import App
 
 
 def read_jsonl(path):
@@ -58,6 +61,38 @@ class JsonlLoggerTest(unittest.TestCase):
         rx = read_jsonl(os.path.join(log.dir, "rx.jsonl"))
         self.assertIn("log_error", rx[0])
         self.assertEqual(rx[1]["text"], "next")
+        log.close()
+
+    def test_disk_error_does_not_stop_writer(self):
+        log = JsonlLogger(self.base)
+        real = log._rx
+
+        class Full:  # 디스크 가득 참
+            def write(self, s):
+                raise OSError(28, "No space left on device")
+
+            def flush(self):
+                pass
+
+        log._rx = Full()
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            for i in range(3):
+                log.text(float(i), "serial", "p", "lost")
+            self.assertTrue(log.flush())
+        self.assertEqual(err.getvalue().count("No space left"), 1)  # 콘솔에는 한 번만
+        st = log.status()
+        self.assertEqual((st["dir"], st["dropped"]), (log.dir, 3))
+        self.assertIn("OSError", st["error"])
+        log._rx = real  # 공간이 다시 생기면 이어서 쓴다
+        log.text(9.0, "serial", "p", "back")
+        self.assertTrue(log.flush())
+        self.assertEqual([r["text"] for r in read_jsonl(os.path.join(log.dir, "rx.jsonl"))], ["back"])
+        log.close()
+
+    def test_state_shows_log_status(self):
+        log = JsonlLogger(self.base)
+        app = App(Hub(logger=log, clock=FakeClock()))
+        self.assertEqual(app.state()["log"], {"dir": log.dir, "error": None, "dropped": 0})
         log.close()
 
 

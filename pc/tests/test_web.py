@@ -89,6 +89,17 @@ class WebTest(unittest.TestCase):
             self.assertEqual(code, 400, bad)
             self.assertTrue(self.app.virtual_status()["running"], bad)
 
+    def test_virtual_start_stop_reaches_state_stream(self):
+        # 가상 실행 여부는 허브 데이터가 아니므로, 시작·중지 때 버전이 올라야 SSE가 새 상태를 보낸다
+        v0 = self.hub.version
+        self.app.set_virtual({"scenario": "normal", "speed": 1})
+        self.assertGreater(self.hub.version, v0)
+        self.assertTrue(json.loads(self.app.state_json())["virtual"]["running"])
+        v1 = self.hub.version
+        self.app.set_virtual({"enabled": False})
+        self.assertGreater(self.hub.version, v1)
+        self.assertFalse(json.loads(self.app.state_json())["virtual"]["running"])
+
     def test_write_requests_need_json_and_allowed_origin(self):
         self.hub.ingest(event(seq=1), "serial", "p")
         host = "127.0.0.1:%d" % self.httpd.server_address[1]

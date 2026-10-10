@@ -2,11 +2,14 @@
 
 디스크 쓰기는 전용 스레드가 한다. 호출 쪽(허브 잠금 안)은 큐에 넣기만 하므로 디스크가 느려도
 시리얼·가상·재생 입력과 SSE 전송이 기다리지 않는다. 큐가 빌 때마다 flush해서 바로 파일에 보인다.
+쓰기가 실패해도(디스크 가득 참 등) 스레드는 멈추지 않고 그 줄을 버린 뒤 다음 줄을 계속 쓴다.
+버린 줄 수와 마지막 오류는 status()로 화면에 보인다.
 """
 
 import json
 import os
 import queue
+import sys
 import threading
 import time
 
@@ -24,6 +27,8 @@ class JsonlLogger:
             json.dump(dict(meta or {}, started=time.time()), f, ensure_ascii=False, indent=2)
         self._q = queue.Queue()
         self._closed = False
+        self.error = None   # 마지막 쓰기 오류
+        self.dropped = 0    # 쓰지 못하고 버린 줄
         self._writer = threading.Thread(target=self._run, daemon=True, name="log-writer")
         self._writer.start()
 
@@ -31,6 +36,20 @@ class JsonlLogger:
         # rec은 호출 시점의 얕은 복사본이어야 한다(나중에 바뀌는 dict를 그대로 넘기지 않는다)
         if not self._closed:
             self._q.put((fp, rec))
+
+    def _failed(self, e):
+        msg = f"{type(e).__name__}: {e}"
+        if msg != self.error:  # 같은 오류는 콘솔에 한 번만
+            print(f"[log] 쓰기 실패, 이후 실패한 줄은 버림: {msg}", file=sys.stderr, flush=True)
+        self.error = msg
+
+    def _flush(self, dirty):
+        for f in dirty:
+            try:
+                f.flush()
+            except Exception as e:  # 버퍼에 있던 줄은 잃는다(몇 줄인지는 알 수 없음)
+                self._failed(e)
+        dirty.clear()
 
     def _run(self):
         dirty = set()
@@ -40,23 +59,25 @@ class JsonlLogger:
                 break
             fp, rec = item
             if fp is None:  # flush() 요청: 앞선 줄을 모두 쓰고 알린다
-                for f in dirty:
-                    f.flush()
-                dirty.clear()
+                self._flush(dirty)
                 rec.set()
                 continue
             try:
-                fp.write(json.dumps(rec, ensure_ascii=False, separators=(",", ":")) + "\n")
+                try:
+                    line = json.dumps(rec, ensure_ascii=False, separators=(",", ":"))
+                except (TypeError, ValueError) as e:  # 직렬화할 수 없는 값
+                    line = json.dumps({"log_error": str(e)})
+                fp.write(line + "\n")
                 dirty.add(fp)
-            except (TypeError, ValueError) as e:  # 직렬화할 수 없는 값
-                fp.write(json.dumps({"log_error": str(e)}) + "\n")
-                dirty.add(fp)
+            except Exception as e:  # OSError(디스크 가득 참) 등: 이 줄을 버리고 계속 돈다
+                self.dropped += 1
+                self._failed(e)
             if self._q.empty():
-                for f in dirty:
-                    f.flush()
-                dirty.clear()
-        for f in dirty:
-            f.flush()
+                self._flush(dirty)
+        self._flush(dirty)
+
+    def status(self):
+        return {"dir": self.dir, "error": self.error, "dropped": self.dropped}
 
     # rx.jsonl 한 줄: rx_ts(서버 UTC epoch 초) · input(serial/sim/replay) · port · result · obj
     def rx(self, ts, input_, port, result, obj, errors=None, warnings=None):
@@ -97,5 +118,8 @@ class JsonlLogger:
         self._closed = True
         self._q.put(_STOP)
         self._writer.join(timeout=5.0)
-        self._rx.close()
-        self._ev.close()
+        for f in (self._rx, self._ev):
+            try:
+                f.close()
+            except OSError as e:
+                self._failed(e)

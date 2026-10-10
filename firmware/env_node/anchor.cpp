@@ -17,8 +17,9 @@ struct SoldierObs {
   float    rssi_avg;
   uint8_t  samples;   // 직전 보고 이후
   uint32_t last_ms;
-  bool     reported;
+  bool     reported;      // 지금 보이는 동안 한 번이라도 보고했는가(사라졌다 돌아오면 false)
   int8_t   reported_avg;
+  uint32_t last_report_ms;
 };
 
 static_assert(ANCHOR_STALE_MS <= 0xFFFF, "age_ms(16bit)가 ANCHOR_STALE_MS를 담지 못함");
@@ -29,9 +30,9 @@ static AnchorStats s_stats = {};
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static BLEScan* s_scan = nullptr;
 static volatile bool s_scanning = false;
+static bool s_scanRetryPending = false;  // 시작 실패 후 기다리는 중(0에서 시작하는 시각 비교는 24.8일 뒤 뒤집힘)
 static uint32_t s_scanRetryAt = 0;
 static uint32_t s_lastReport = 0;
-static uint32_t s_holdUntil = 0;  // 큐가 가득 차 미룬 보고의 재시도 시각
 
 // now가 then보다 앞서면(다른 태스크가 더 늦은 millis()를 기록) 0으로 본다
 static uint32_t elapsedMs(uint32_t now, uint32_t then) {
@@ -111,73 +112,91 @@ void anchorBegin() {
   s_scan->setWindow(ANCHOR_SCAN_WINDOW_MS);
 }
 
-// 보고에 실린 병사를 보고 완료로 표시한다. 보고 뒤에 받은 표본 수는 남긴다.
-static void markReported(const SoldierObs* snap, uint8_t n) {
-  portENTER_CRITICAL(&s_mux);
-  for (uint8_t i = 0; i < n; i++) {
-    for (auto& o : s_tab) {
-      if (!o.used || o.id != snap[i].id) continue;
-      o.reported = true;
-      o.reported_avg = (int8_t)lroundf(snap[i].rssi_avg);
-      o.samples = o.samples > snap[i].samples ? o.samples - snap[i].samples : 0;
-    }
-  }
-  portEXIT_CRITICAL(&s_mux);
-}
+// 보고할 차례인 병사: 아직 보고 안 함 > RSSI 평균이 크게 바뀜 > 마지막 보고가 오래됨 순서
+struct Due {
+  SoldierObs obs;
+  uint8_t rank;      // 0 새로 보임, 1 변화, 2 주기
+  uint32_t waited;   // 마지막 보고 후 경과
+};
 
-// 병사마다 관측 패킷 하나(각자 seq). 모두 큐에 넣을 수 있을 때만 보내고, 자리가 없으면 seq를 쓰지 않고 false.
-// rssi_dbm은 마지막으로 직접 받은 패킷(observed_seq)의 값이다. 평활은 서버가 한다.
-static bool sendReports(const SoldierObs* snap, uint8_t n, uint32_t now) {
-  if (bleTxFree() < n) {
-    s_stats.queue_full_skip++;
-    return false;
-  }
-  for (uint8_t i = 0; i < n; i++) {
-    const SoldierObs& o = snap[i];
-    PktAnchorObs p = {};
-    nodeFillHeader(p.h, PKT_ANCHOR_OBS, 0);  // 실제 관측이므로 항상 device
-    uint32_t age = elapsedMs(now, o.last_ms);
-    p.observed_node = o.id;
-    p.observed_boot = o.boot_id;
-    p.observed_seq = o.last_seq;
-    p.rssi_dbm = o.rssi_last;
-    p.age_ms = age > 0xFFFF ? 0xFFFF : age;
-    bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), 1);  // 자리는 위에서 확인
-    s_stats.reports++;
-    printAnchorObsJson(p);
-  }
-  markReported(snap, n);
-  return true;
+static void sendOne(const SoldierObs& o, uint32_t now) {
+  PktAnchorObs p = {};
+  nodeFillHeader(p.h, PKT_ANCHOR_OBS, 0);  // 실제 관측이므로 항상 device
+  uint32_t age = elapsedMs(now, o.last_ms);
+  p.observed_node = o.id;
+  p.observed_boot = o.boot_id;
+  p.observed_seq = o.last_seq;
+  p.rssi_dbm = o.rssi_last;  // 마지막으로 직접 받은 패킷(observed_seq)의 RSSI. 평활은 서버가 한다
+  p.age_ms = age > 0xFFFF ? 0xFFFF : age;
+  bleTxQueue(reinterpret_cast<const uint8_t*>(&p), sizeof(p), 1);  // 자리는 부르는 쪽이 확인
+  s_stats.reports++;
+  printAnchorObsJson(p);
 }
 
 void anchorLoop(uint32_t now) {
-  if (!s_scanning && (int32_t)(now - s_scanRetryAt) >= 0) {
+  if (!s_scanning && (!s_scanRetryPending || (int32_t)(now - s_scanRetryAt) >= 0)) {
     s_scan->clearResults();
     s_scanning = s_scan->start(ANCHOR_SCAN_CYCLE_S, onScanDone, false);
-    if (!s_scanning) s_scanRetryAt = now + ANCHOR_SCAN_RETRY_MS;
+    s_scanRetryPending = !s_scanning;
+    if (s_scanRetryPending) s_scanRetryAt = now + ANCHOR_SCAN_RETRY_MS;
   }
 
-  if (now - s_lastReport < ANCHOR_MIN_REPORT_MS || (int32_t)(now - s_holdUntil) < 0) return;
+  if (now - s_lastReport < ANCHOR_MIN_REPORT_MS) return;  // 보고 묶음 사이 최소 간격
 
-  SoldierObs snap[ANCHOR_MAX_SOLDIERS];
+  Due due[ANCHOR_MAX_SOLDIERS];
   uint8_t n = 0;
-  bool changed = false;
-
   portENTER_CRITICAL(&s_mux);
   // 잠금 안에서 시각을 읽어야 콜백이 기록한 last_ms보다 늦은 값이 보장된다
   uint32_t t = millis();
-  for (const auto& o : s_tab) {
-    if (!o.used || elapsedMs(t, o.last_ms) > ANCHOR_STALE_MS) continue;
+  for (auto& o : s_tab) {
+    if (!o.used) continue;
+    uint32_t age = elapsedMs(t, o.last_ms);
+    if (age > ANCHOR_STALE_MS) {
+      o.reported = false;                              // 돌아오면 새로 보인 것으로 바로 보고
+      if (age > 2 * ANCHOR_STALE_MS) o.used = false;   // 오래된 칸은 비워 둔다
+      continue;
+    }
     int8_t avg = (int8_t)lroundf(o.rssi_avg);
-    if (!o.reported || abs(avg - o.reported_avg) >= ANCHOR_RSSI_DELTA_DB) changed = true;
-    snap[n++] = o;
+    uint32_t waited = elapsedMs(t, o.last_report_ms);
+    uint8_t rank;
+    if (!o.reported) rank = 0;
+    else if (abs(avg - o.reported_avg) >= ANCHOR_RSSI_DELTA_DB) rank = 1;
+    else if (waited >= ANCHOR_MAX_REPORT_MS) rank = 2;
+    else continue;
+    due[n++] = {o, rank, waited};
   }
   portEXIT_CRITICAL(&s_mux);
+  if (n == 0) return;
 
-  bool periodic = n > 0 && now - s_lastReport >= ANCHOR_MAX_REPORT_MS;
-  if (!changed && !periodic) return;
-  if (sendReports(snap, n, t)) s_lastReport = now;
-  else s_holdUntil = now + ANCHOR_MIN_REPORT_MS;
+  // 큐 자리만큼만 보낸다(병사 수가 큐보다 많아도 멈추지 않음). 남은 병사는 다음 차례에 먼저 나간다.
+  uint8_t room = bleTxFree();
+  if (room < n) s_stats.queue_full_skip++;
+  if (room == 0) return;
+  for (uint8_t i = 1; i < n; i++) {  // 우선순위 정렬(작은 배열이라 삽입 정렬)
+    Due d = due[i];
+    int j = i - 1;
+    while (j >= 0 && (due[j].rank > d.rank || (due[j].rank == d.rank && due[j].waited < d.waited))) {
+      due[j + 1] = due[j];
+      j--;
+    }
+    due[j + 1] = d;
+  }
+  uint8_t sent = n < room ? n : room;
+  for (uint8_t i = 0; i < sent; i++) sendOne(due[i].obs, t);
+
+  // 보낸 병사만 보고 완료로 표시한다. 보고 뒤에 받은 표본 수는 남긴다.
+  portENTER_CRITICAL(&s_mux);
+  for (uint8_t i = 0; i < sent; i++) {
+    for (auto& o : s_tab) {
+      if (!o.used || o.id != due[i].obs.id) continue;
+      o.reported = true;
+      o.reported_avg = (int8_t)lroundf(due[i].obs.rssi_avg);
+      o.samples = o.samples > due[i].obs.samples ? o.samples - due[i].obs.samples : 0;
+      o.last_report_ms = t;
+    }
+  }
+  portEXIT_CRITICAL(&s_mux);
+  s_lastReport = now;
 }
 
 const AnchorStats& anchorStats() { return s_stats; }

@@ -1,4 +1,4 @@
-// PC에서 환경 노드의 JSON 출력 코드(json_out.cpp)만 빌드하기 위한 최소 Arduino 대체.
+// PC에서 환경 노드의 일부(json_out.cpp·node.cpp)만 빌드하기 위한 최소 Arduino 대체.
 #pragma once
 #include <cmath>
 #include <cstdarg>
@@ -21,3 +21,7 @@ struct HostSerial {
 };
 
 extern HostSerial Serial;
+
+// 시험이 정하는 가짜 시각
+extern uint32_t g_millis;
+inline uint32_t millis() { return g_millis; }

@@ -13,6 +13,10 @@ from squadlink.ingest import Replayer, SerialReader, classify_line, iter_log_rec
 class RecordingHub:
     def __init__(self):
         self.data, self.diag = [], []
+        self.touches = 0
+
+    def touch(self):
+        self.touches += 1
 
     def ingest(self, obj, input_, port):
         self.data.append((obj, input_, port))
@@ -105,6 +109,12 @@ class ReplayTest(unittest.TestCase):
         r.run()
         s = hub.snapshot()["soldiers"][0]
         self.assertEqual((s["source"], s["input"]), ("device", "replay"))
+
+    def test_finish_notifies_hub(self):
+        path = self.write([json.dumps(status(seq=1, source="device"))])
+        hub = RecordingHub()
+        Replayer(path, hub, speed=1000, gap_s=0).run()
+        self.assertEqual((len(hub.data), hub.touches), (1, 1))
 
     def test_speed_must_be_positive(self):
         hub, _ = new_hub()

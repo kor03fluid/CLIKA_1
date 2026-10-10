@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import unittest
 
-from helpers import new_hub
+from helpers import environment, new_hub
 
 from squadlink.ingest import classify_line
 from squadlink.schema import validate
@@ -91,6 +91,46 @@ class FirmwareJsonOutputTest(unittest.TestCase):
         self.assertEqual(env["node_id"], "env_01")
         self.assertEqual([e["event_type"] for e in hub.list_events()], ["heat_exposure"])
         self.assertEqual(snap["anchor_observations"][0]["observed_node_id"], "halo_01")
+
+
+@unittest.skipIf(CXX is None, "C++ 컴파일러 없음")
+class FirmwareNodeHeaderTest(unittest.TestCase):
+    """node.cpp: seq는 출처마다 따로 세고, 65535에 이르면 새 boot_id로 넘어간다."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="squadlink-fw-")
+        exe = os.path.join(cls.tmp, "host_node")
+        # -I HOST_DIR를 앞에 두어 Preferences.h·esp_random.h 대체가 쓰이게 한다
+        subprocess.run([CXX, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-I", HOST_DIR, "-I", FW_DIR,
+                        os.path.join(FW_DIR, "node.cpp"), os.path.join(HOST_DIR, "host_node.cpp"),
+                        "-o", exe], check=True, capture_output=True, text=True)
+        out = subprocess.run([exe], check=True, capture_output=True, text=True).stdout
+        cls.rows = [(src, boot, int(seq)) for src, boot, seq, _ in (l.split() for l in out.splitlines())]
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_seq_per_source(self):
+        mixed = self.rows[:7]
+        self.assertEqual({b for _, b, _ in mixed}, {"1a2b"})
+        self.assertEqual([q for s, _, q in mixed if s == "device"], [1, 2, 3, 4])
+        self.assertEqual([q for s, _, q in mixed if s == "simulation"], [1, 2, 3])
+
+    def test_wrap_starts_new_boot(self):
+        self.assertEqual(self.rows[7:], [("device", "1a2c", 1), ("simulation", "1a2c", 1),
+                                         ("device", "1a2d", 1)])
+
+    def test_server_sees_no_missing_while_mixed(self):
+        # 실측·가상이 섞인 스트림(같은 포트, vtemp 시험)을 서버에 넣어도 어느 쪽에도 누락이 없어야 한다
+        hub, clock = new_hub()
+        for src, boot, seq in self.rows[:7]:
+            clock.t += 1
+            self.assertEqual(hub.ingest(environment(seq=seq, boot="boot_" + boot, source=src),
+                                        "serial", "COM7"), "ok")
+        streams = hub.snapshot()["nodes"]["env_01"]["streams"]
+        self.assertEqual({k: v["missing"] for k, v in streams.items()}, {"device": 0, "simulation": 0})
 
 
 class FirmwareSourceTest(unittest.TestCase):

@@ -14,8 +14,8 @@
 관제 UI·구역 추정·PMVP는 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
 `/`의 디버그 화면은 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 73개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
-PC에서 빌드·실행한 결과를 검사기로 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
+**검증 상태**: 단위 테스트 83개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
+PC에서 빌드·실행한 결과를 검사기로 확인한다. 펌웨어의 `boot_id`·`seq` 부여 코드도 PC에서 빌드해 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
 (데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
 ## 실행
@@ -60,7 +60,8 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
   재사용된 번호로 보고 새 부팅으로 받는다.
 - **출처**: 같은 `node_id`를 실제(`device`)와 가상(`simulation`)이 함께 보내면 실제가 우선이다. 표시 중인 출처가
   활동 중이면 다른 출처의 상태 패킷은 `shadowed`로 가리고(사건은 출처 라벨을 달고 기록), 두절 기준만큼 조용하면
-  이어받는다. 같은 입력 포트에서 출처가 바뀌면(환경 노드 `vtemp` 시험) 장치가 바꾼 것으로 보고 따른다.
+  이어받는다. 가려진 출처도 중복 제거·번호 추적은 하므로 반복 광고가 사건 보고 수를 늘리지 않고, 이어받을 때
+  가려졌던 동안의 번호가 누락으로 잡히지 않는다. 같은 입력 포트에서 출처가 바뀌면(환경 노드 `vtemp` 시험) 장치가 바꾼 것으로 보고 따른다.
   앵커 관측은 출처 선택과 무관하게 받는다.
 
 ## 상태
@@ -94,7 +95,7 @@ python server.py --replay logs/20261010-120000/rx.jsonl --replay-speed 5
 |---|---|
 | `GET /api/state` | 전체 상태(아래) |
 | `GET /api/events?since=<n>&limit=200` | 사건 목록(`n`보다 나중 것) |
-| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시). 상태 JSON은 변경당 한 번 만들어 모든 연결이 같이 쓴다 |
+| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시). 상태 JSON은 변경당 한 번 만들어 모든 연결이 같이 쓴다. 가상 노드 시작·중지, 시리얼 연결·끊김, 재생 종료도 변경으로 보낸다 |
 | `GET /api/roster` / `POST /api/roster` | 분대원 배정 조회·변경 `{"soldier_id","assigned_node_id"(null 가능),"name"}` |
 | `POST /api/env_nodes` | 환경 노드 설치 지점 `{"node_id","location_name"}` |
 | `POST /api/events/<event_id>/ack` | 지휘관 확인. body `{"by"}` 선택. 같은 ID가 두 출처에 있으면 `?source=device` |
@@ -124,6 +125,7 @@ anchor_observations[] anchor_id · observed_node_id · observed_boot_id · obser
                       received_at · age_ms · source · route
 nodes{node_id}        노드별 진단: kinds · active_source · counters(rx·dup·late·stale_boot·shadowed·missing·relayed·reboots)
 event_counts · totals · recent_invalid · recent_warnings · device_stats · virtual · inputs · replay
+log                   dir · error(마지막 쓰기 오류) · dropped(쓰지 못하고 버린 줄 수)
 ```
 
 `input`은 데이터가 들어온 경로(`serial`·`sim`·`replay`), `source`는 패킷의 출처(`device`·`simulation`)다.
@@ -158,6 +160,8 @@ event_counts · totals · recent_invalid · recent_warnings · device_stats · v
 - `session.json`: 실행 옵션
 
 파일 쓰기는 전용 스레드가 한다. 강제 종료(kill -9, 전원 차단)에서는 마지막 몇 줄이 빠질 수 있다.
+디스크가 가득 차는 등 쓰기가 실패하면 그 줄을 버리고 계속 돈다(메모리에 쌓지 않음). 오류는 콘솔에 한 번 출력하고
+`/api/state`의 `log.error`·`log.dropped`와 디버그 화면 맨 위에 보인다. 공간이 생기면 다음 줄부터 다시 쓴다.
 `--replay`로 `rx.jsonl`(받아들였던 줄·중복·지연·진단)이나 NDJSON 파일을 다시 흘릴 수 있다.
 
 ## 테스트

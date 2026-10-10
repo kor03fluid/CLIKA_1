@@ -57,6 +57,9 @@ class App:
         if self.replayer is not None:
             s["replay"] = {"path": self.replayer.path, "done": self.replayer.done,
                            "error": self.replayer.error}
+        logger = getattr(self.hub, "logger", None)
+        if logger is not None:
+            s["log"] = logger.status()
         return s
 
     def state_json(self):
@@ -86,7 +89,9 @@ class App:
             if runner is not None:
                 self.virtual = runner
                 runner.start()
-            return self.virtual_status()
+            status = self.virtual_status()
+        self.hub.touch()  # 실행 여부는 허브 상태가 아니므로 직접 알린다
+        return status
 
     def _build_virtual(self, cfg):
         nodes = cfg.get("nodes") or None

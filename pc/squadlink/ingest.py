@@ -59,13 +59,15 @@ class SerialReader(threading.Thread):
         import serial  # pyserial. 시리얼을 쓸 때만 필요
 
         while not self._stop_evt.is_set():
+            shown_error = self.error
             try:
                 ser = serial.Serial(self.port, self.baud, timeout=1)
                 with self._wlock:
                     self._ser = ser
                 self.connected = True
                 print(f"[serial {self.port}] 연결", file=sys.stderr, flush=True)
-                self.error = None
+                self.error = shown_error = None
+                self.hub.touch()  # 화면의 입력 상태 갱신
                 buf = b""
                 while not self._stop_evt.is_set():
                     chunk = ser.readline()
@@ -83,7 +85,7 @@ class SerialReader(threading.Thread):
                     print(f"[serial {self.port}] {e}", file=sys.stderr, flush=True)
                 self.error = str(e)
             finally:
-                self.connected = False
+                was_connected, self.connected = self.connected, False
                 with self._wlock:  # write_line과 겹치지 않게 닫는다
                     ser, self._ser = self._ser, None
                 if ser is not None:
@@ -91,6 +93,8 @@ class SerialReader(threading.Thread):
                         ser.close()
                     except Exception:
                         pass
+                if was_connected or self.error != shown_error:  # 같은 오류 재시도는 알리지 않는다
+                    self.hub.touch()
             self._stop_evt.wait(2.0)
 
     def _on_line(self, line):
@@ -200,6 +204,7 @@ class Replayer(threading.Thread):
             print(f"[replay] {self.error}", file=sys.stderr, flush=True)
         finally:
             self.done = True
+            self.hub.touch()  # 재생 끝·오류 표시
 
     def stop(self):
         self._stop_evt.set()

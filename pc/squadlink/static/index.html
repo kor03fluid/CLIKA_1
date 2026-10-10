@@ -82,7 +82,8 @@ function renderState(s) {
   const t = s.totals;
   $("totals").textContent = `수신 ${t.accepted} · 중복 ${t.dup} · 지연 ${t.late + t.stale_boot} · ` +
     `무효 ${t.invalid} · 경고 ${t.warnings} · 가려짐 ${t.shadowed} · 입력 ` +
-    ((s.inputs || []).map((i) => `${i.port}:${i.connected ? "연결" : "끊김"}`).join(", ") || "없음");
+    ((s.inputs || []).map((i) => `${i.port}:${i.connected ? "연결" : "끊김"}`).join(", ") || "없음") +
+    (s.log && (s.log.error || s.log.dropped) ? ` · 로그 쓰기 실패(버린 줄 ${s.log.dropped}): ${s.log.error}` : "");
   const v = s.virtual || {};
   $("vstatus").textContent = v.running ? `실행 중: ${v.scenario} t=${v.t}s / ${v.length_s}s` : "중지";
 

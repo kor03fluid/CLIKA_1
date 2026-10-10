@@ -114,6 +114,17 @@ class WebTest(unittest.TestCase):
         self.assertEqual(cm.exception.code, 400)
         self.assertEqual(self.get("/api/events?limit=0"), [])
 
+    def test_state_json_is_shared_until_hub_changes(self):
+        a = self.app.state_json()
+        self.assertIs(self.app.state_json(), a)  # 같은 버전·짧은 시간 안: 같은 문자열 재사용
+        self.hub.ingest({"type": "soldier", "node": 1, "boot": 1, "seq": 1}, "real", "p", 0)
+        b = self.app.state_json()
+        self.assertIsNot(b, a)
+        self.assertIn('"1"', b)
+        version, built, text = self.app._state_cache
+        self.app._state_cache = (version, built - 10, text)  # 오래된 캐시는 다시 만든다(age_s 갱신)
+        self.assertIsNot(self.app.state_json(), text)
+
     def test_stream_sends_initial_state(self):
         with urllib.request.urlopen(self.base + "/api/stream", timeout=5) as r:
             self.assertEqual(r.readline().decode().strip(), "event: state")

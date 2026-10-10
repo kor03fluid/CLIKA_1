@@ -14,7 +14,7 @@
 관제 UI·구역 추정·우선순위 판단은 팀장 담당이다. 이 서버는 그 화면이 쓰는 데이터와 API를 제공한다.
 `/`의 디버그 화면은 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 44개 통과(펌웨어 출력 형식과의 일치 검사 포함). 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
+**검증 상태**: 단위 테스트 48개 통과(펌웨어 출력 형식과의 일치 검사 포함). 가짜 시리얼 장치(pty)로 수신·명령 전달·로그·재생과
 디버그 화면(데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
 ## 실행
@@ -86,7 +86,7 @@ JSON이 아닌 줄(ESP32 부팅 메시지 등)과 `NaN`·`Infinity`가 든 줄�
 |---|---|
 | `GET /api/state` | 전체 상태(아래) |
 | `GET /api/events?since=<id>&limit=200` | 이벤트 목록 |
-| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시) |
+| `GET /api/stream` | SSE. `event: state`(변경 시, 최대 초당 4회) · `event: event`(즉시). 상태 JSON은 변경당 한 번 만들어 모든 연결이 같이 쓴다 |
 | `POST /api/events/<id>/ack` | 지휘관 확인. body `{"by":"..."}` 선택 |
 | `POST /api/events/<id>/resolve` | 실제 해결. 확인과 따로 기록 |
 | `POST /api/virtual` | `{"enabled":true,"scenario":"demo","nodes":[2],"speed":1,"loop":false,"loss_rate":0}` / `{"enabled":false}` |
@@ -165,6 +165,9 @@ virtual · inputs · replay
   `result`(ok·late·dup·stale_boot·shadowed·meta·invalid·error·text), `obj`, `error`
 - `events.jsonl`: 이벤트(`rec:"event"`)와 확인·해결 기록(`rec:"ack"`, `rec:"resolve"`)
 - `session.json`: 실행 옵션
+
+파일 쓰기는 전용 스레드가 한다(입력 처리·화면 전송이 디스크를 기다리지 않음). Ctrl+C나 SIGTERM으로 끄면
+남은 줄을 모두 쓰고 닫는다. 강제 종료(kill -9, 전원 차단)에서는 마지막 몇 줄이 빠질 수 있다.
 
 `--replay`로 `rx.jsonl`을 다시 흘릴 수 있다(`source:"replay"`로 표시, 실시간 시연이 아님을 밝힌다).
 

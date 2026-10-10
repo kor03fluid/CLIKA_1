@@ -12,6 +12,7 @@
 import argparse
 import math
 import os
+import signal
 import sys
 import threading
 import time
@@ -62,8 +63,14 @@ def parse_args(argv=None):
     return p.parse_args(argv)
 
 
+def _graceful_exit(signum, frame):
+    # SIGTERM(창 닫기·서비스 중지 등)도 Ctrl+C처럼 정리 경로를 타게 해 로그 큐를 끝까지 쓴다
+    raise KeyboardInterrupt
+
+
 def main(argv=None):
     args = parse_args(argv)
+    signal.signal(signal.SIGTERM, _graceful_exit)
     logger = JsonlLogger(args.log_dir, meta=vars(args))
     hub = Hub(logger=logger)
     app = App(hub, allow_origins=args.allow_origin)

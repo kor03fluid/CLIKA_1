@@ -40,6 +40,8 @@ class App:
         self.virtual = None
         self.stopping = False
         self._vlock = threading.Lock()
+        self._slock = threading.Lock()
+        self._state_cache = None  # (hub.version, 만든 시각 monotonic, JSON 문자열)
 
     def virtual_status(self):
         v = self.virtual
@@ -52,6 +54,21 @@ class App:
             s["replay"] = {"path": self.replayer.path, "done": self.replayer.done,
                            "error": self.replayer.error}
         return s
+
+    def state_json(self):
+        """직렬화한 상태. 같은 hub 버전이면 STATE_MIN_GAP_S 동안 한 번 만든 문자열을 모든 연결이 같이 쓴다.
+
+        SSE 연결이 여럿이어도 상태 스냅샷(허브 잠금)과 직렬화는 변경당 한 번만 일어난다.
+        """
+        with self._slock:
+            now = time.monotonic()
+            c = self._state_cache
+            if c is not None and c[0] == self.hub.version and now - c[1] < STATE_MIN_GAP_S:
+                return c[2]
+            s = self.state()
+            text = json.dumps(s, ensure_ascii=False, separators=(",", ":"))
+            self._state_cache = (s["version"], now, text)
+            return text
 
     def set_virtual(self, cfg):
         """가상 노드 시작/교체/중지. 값이 잘못되면 ValueError를 내고 실행 중인 것은 그대로 둔다."""
@@ -120,7 +137,10 @@ def make_handler(app):
                 self.send_header("Vary", "Origin")
 
         def _json(self, obj, status=200):
-            body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+            self._json_text(json.dumps(obj, ensure_ascii=False), status)
+
+        def _json_text(self, text, status=200):
+            body = text.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -185,7 +205,7 @@ def make_handler(app):
         def _get(self):
             url = urlparse(self.path)
             if url.path == "/api/state":
-                return self._json(app.state())
+                return self._json_text(app.state_json())
             if url.path == "/api/events":
                 q = parse_qs(url.query)
                 try:
@@ -242,7 +262,9 @@ def make_handler(app):
             self.wfile.write(body)
 
         def _send_sse(self, event, data):
-            payload = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+            self._send_sse_text(event, json.dumps(data, ensure_ascii=False, separators=(",", ":")))
+
+        def _send_sse_text(self, event, payload):
             self.wfile.write(f"event: {event}\ndata: {payload}\n\n".encode("utf-8"))
             self.wfile.flush()
 
@@ -267,7 +289,7 @@ def make_handler(app):
 
             app.hub.subscribe(listener)
             try:
-                self._send_sse("state", app.state())
+                self._send_sse_text("state", app.state_json())
                 last_state = last_ping = time.monotonic()
                 while not app.stopping:
                     try:
@@ -278,7 +300,7 @@ def make_handler(app):
                     if dirty.is_set() and now - last_state >= STATE_MIN_GAP_S:
                         dirty.clear()
                         last_state = now
-                        self._send_sse("state", app.state())
+                        self._send_sse_text("state", app.state_json())
                     if now - last_ping >= 15:
                         last_ping = now
                         self.wfile.write(b": ping\n\n")

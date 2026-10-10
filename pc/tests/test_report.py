@@ -10,7 +10,7 @@ from helpers import FakeClock, anchor, environment, event, status
 
 from squadlink.hub import Hub
 from squadlink.logger import JsonlLogger
-from squadlink.report import format_text, main, read_log, summarize
+from squadlink.report import format_text, main, read_log, resolve_log, summarize
 
 
 def stats(uptime_ms, packets, mode="fixed", anchor_on=True, reports=0, boot="boot_e1", vsensor=False, adv_fail=0):
@@ -145,6 +145,17 @@ class ReportFromRawCaptureTest(unittest.TestCase):
         # 10초마다 보내는 노드: 13개(120초) → 분당 6
         path = self.write([json.dumps(status(seq=s, source="device", uptime_ms=s * 10000)) for s in range(1, 14)])
         self.assertEqual(summarize(read_log(path))["nodes"][0]["per_min"], 6.0)
+
+    def test_logs_root_picks_latest_run(self):
+        root = tempfile.mkdtemp(prefix="squadlink-logs-")
+        self.addCleanup(shutil.rmtree, root, True)
+        for run, seq in (("20261010-090000", 1), ("20261010-120000", 2)):
+            os.makedirs(os.path.join(root, run))
+            with open(os.path.join(root, run, "rx.jsonl"), "w", encoding="utf-8") as f:
+                f.write(json.dumps(via(environment(seq=seq, source="device"), "env_01")) + "\n")
+        (env,) = summarize(read_log(root))["nodes"]
+        self.assertEqual(env["packets"], 1)
+        self.assertTrue(resolve_log(root).endswith(os.path.join("20261010-120000", "rx.jsonl")))
 
     def test_missing_file(self):
         err = io.StringIO()

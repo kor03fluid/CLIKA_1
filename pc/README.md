@@ -24,11 +24,13 @@
 
 관제 UI·구역 추정·PMVP는 팀장 담당이다. `/`의 디버그 화면은 C의 데이터 확인용이다.
 
-**검증 상태**: 단위 테스트 113개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
+**검증 상태**: 단위 테스트 114개 통과. 규격 문서의 JSON 예시 5개와, 환경 노드 펌웨어의 실제 JSON 출력 코드를
 PC에서 빌드·실행한 결과를 검사기로 확인한다. 펌웨어의 `boot_id`·`seq` 부여 코드도 PC에서 빌드해 확인한다. 가짜 시리얼 장치로 수신·진단 줄·명령 전달·로그와 디버그 화면
 (데스크톱·휴대폰 폭)을 확인. 실물 게이트웨이·환경 노드 연결은 미검증.
 
 ## 실행
+
+VS Code에서는 저장소 폴더를 열고 **실행 및 디버그(Ctrl+Shift+D)** 목록에서 고른 뒤 F5 — [`docs/RUN_VSCODE.md`](../docs/RUN_VSCODE.md).
 
 Python 3.9 이상. 시리얼을 쓸 때만 `pip install -r requirements.txt` (pyserial).
 
@@ -182,9 +184,15 @@ log                   dir · error(마지막 쓰기 오류) · dropped(쓰지 �
 `/api/state`의 `log.error`·`log.dropped`와 디버그 화면 맨 위에 보인다. 공간이 생기면 다음 줄부터 다시 쓴다.
 `--replay`로 `rx.jsonl`(받아들였던 줄·중복·지연·진단)이나 NDJSON 파일을 다시 흘릴 수 있다.
 
+## 팀장 서버로 NDJSON 보내기
+
+`python send_ndjson.py <파일>`: NDJSON 줄을 팀장 서버 `POST /api/ingest`(기본 `http://127.0.0.1:8080`)에 한 줄씩 보낸다.
+팀장 브리지의 `--stdin`과 같은 일을 셸 리디렉션 없이 한다(PowerShell·VS Code 작업용). `#` 진단 줄은 건너뛴다.
+
 ## 로그 요약 (실물 시험 기록용)
 
 ```sh
+python report.py logs                                  # 가장 최근 실행
 python report.py logs/20261010-120000                  # 서버 로그 폴더(rx.jsonl)
 python report.py env01_capture.ndjson                   # 장치 USB 출력을 그대로 저장한 파일
 python report.py logs/20261010-120000 --json > result.json

@@ -47,10 +47,20 @@ def _is_int(v):
     return isinstance(v, int) and not isinstance(v, bool)
 
 
+def resolve_log(path):
+    """파일이면 그대로, 실행 폴더면 그 안의 rx.jsonl, logs 폴더면 가장 최근 실행의 rx.jsonl."""
+    if not os.path.isdir(path):
+        return path
+    direct = os.path.join(path, "rx.jsonl")
+    if os.path.exists(direct):
+        return direct
+    runs = sorted(d for d in os.listdir(path) if os.path.exists(os.path.join(path, d, "rx.jsonl")))
+    return os.path.join(path, runs[-1], "rx.jsonl") if runs else direct
+
+
 def read_log(path):
     """(rx_ts 또는 None, result, 객체) 목록. result: 서버 판정, "diag", "text", 또는 None(원시 NDJSON)."""
-    if os.path.isdir(path):
-        path = os.path.join(path, "rx.jsonl")
+    path = resolve_log(path)
     out = []
     with open(path, encoding="utf-8") as f:
         for line in f:
@@ -345,7 +355,7 @@ def main(argv=None):
     import argparse
 
     ap = argparse.ArgumentParser(description="SQUAD LINK 로그 요약(수신·누락·송신량)")
-    ap.add_argument("log", help="rx.jsonl, 그 폴더, 또는 장치 출력을 저장한 NDJSON")
+    ap.add_argument("log", help="rx.jsonl, 그 실행 폴더, logs 폴더(가장 최근 실행), 또는 장치 출력을 저장한 NDJSON")
     ap.add_argument("--json", action="store_true", help="결과를 JSON으로 출력")
     args = ap.parse_args(argv)
     try:
@@ -354,6 +364,8 @@ def main(argv=None):
         print(f"로그를 읽을 수 없음: {e}", file=sys.stderr)
         return 1
     rep = summarize(records)
+    if not args.json:
+        print(f"로그: {resolve_log(args.log)}")
     if args.json:
         print(json.dumps(rep, ensure_ascii=False, indent=2))
     else:

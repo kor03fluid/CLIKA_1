@@ -1,0 +1,47 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "준비: pyserial 설치 (USB 연결 전에 한 번)",
+      "type": "shell",
+      "command": "python -m pip install -r requirements.txt",
+      "options": { "cwd": "${workspaceFolder}/pc" },
+      "problemMatcher": []
+    },
+    {
+      "label": "USB 포트 목록 보기",
+      "type": "shell",
+      "command": "python -m serial.tools.list_ports -v",
+      "problemMatcher": []
+    },
+    {
+      "label": "펌웨어 빌드 (arduino-cli)",
+      "type": "shell",
+      "command": "arduino-cli compile --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_node",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "펌웨어 업로드 (arduino-cli)",
+      "type": "shell",
+      "command": "arduino-cli compile --upload -p ${input:comPort} --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_node",
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": []
+    },
+    {
+      "label": "시리얼 모니터 (arduino-cli, 115200)",
+      "type": "shell",
+      "command": "arduino-cli monitor -p ${input:comPort} -c baudrate=115200",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "comPort",
+      "type": "promptString",
+      "description": "환경 노드 COM 포트 (예: COM5)",
+      "default": "COM5"
+    }
+  ]
+}

@@ -180,18 +180,19 @@ static void printStats() {
   const TxStats& t = bleTxStats();
   const AnchorStats& a = anchorStats();
   diagBegin("stats");
-  Serial.printf(",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"uptime_ms\":%lu,"
+  Serial.printf(",\"tx_mode\":\"%s\",\"anchor_enabled\":%s,\"anchor_test\":%s,\"uptime_ms\":%lu,"
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
                 "\"dropped\":%lu,\"adv_fail\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
-                "\"rx_simulation_skip\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu,"
+                "\"rx_simulation_skip\":%lu,\"rx_simulation\":%lu,\"table_full_skip\":%lu,\"reports\":%lu,\"queue_full_skip\":%lu,"
                 "\"scan_restarts\":%lu}}\n",
-                modeName(), anchorEnabled() ? "true" : "false", (unsigned long)millis(), (unsigned long)t.packets,
+                modeName(), anchorEnabled() ? "true" : "false", anchorTestMode() ? "true" : "false",
+                (unsigned long)millis(), (unsigned long)t.packets,
                 (unsigned long)t.windows, (unsigned long)t.est_adv_events,
                 (unsigned long)t.payload_bytes, (unsigned long)t.dropped, (unsigned long)t.adv_fail,
                 (unsigned long)a.rx_total,
                 (unsigned long)a.rx_soldier, (unsigned long)a.rx_relayed_skip,
-                (unsigned long)a.rx_simulation_skip, (unsigned long)a.table_full_skip,
+                (unsigned long)a.rx_simulation_skip, (unsigned long)a.rx_simulation, (unsigned long)a.table_full_skip,
                 (unsigned long)a.reports, (unsigned long)a.queue_full_skip, (unsigned long)a.scan_restarts);
 }
 
@@ -214,7 +215,16 @@ static void setAnchorCommand(bool on) {
 #endif
 }
 
-// 시리얼 명령: stats | mode fixed | mode adaptive | anchor on | anchor off | vtemp <°C> | vtemp off | send
+static void setAnchorTestCommand(bool on) {
+#if ANCHOR_ENABLE
+  anchorSetTestMode(on);
+#else
+  printWarn("anchor disabled at build (ANCHOR_ENABLE 0)", on ? String("test on") : String("test off"));
+#endif
+}
+
+// 시리얼 명령: stats | mode fixed | mode adaptive | anchor on | anchor off | anchor test on | anchor test off |
+//             vtemp <°C> | vtemp off | send
 static void handleSerial(uint32_t now) {
   static String line;
   while (Serial.available()) {
@@ -229,6 +239,8 @@ static void handleSerial(uint32_t now) {
     else if (line == "mode adaptive") s_adaptive = true;
     else if (line == "anchor on") setAnchorCommand(true);
     else if (line == "anchor off") setAnchorCommand(false);
+    else if (line == "anchor test on") setAnchorTestCommand(true);
+    else if (line == "anchor test off") setAnchorTestCommand(false);
     else if (line == "vtemp off") sensorsSetVirtualTemp(NAN);
     else if (line.startsWith("vtemp ")) setVirtualTempCommand(line.c_str() + 6);
     else if (line == "send") sendEnv(now, false);
@@ -250,8 +262,8 @@ void setup() {
   anchorBegin();
 #endif
   diagBegin("boot");
-  Serial.printf(",\"tx_mode\":\"%s\",\"anchor\":%s,\"schema_version\":\"1.0\"}\n", modeName(),
-                ANCHOR_ENABLE ? "true" : "false");
+  Serial.printf(",\"tx_mode\":\"%s\",\"anchor\":%s,\"anchor_test\":%s,\"schema_version\":\"1.0\"}\n",
+                modeName(), ANCHOR_ENABLE ? "true" : "false", anchorTestMode() ? "true" : "false");
 }
 
 void loop() {

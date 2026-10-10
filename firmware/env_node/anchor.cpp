@@ -11,6 +11,7 @@
 struct SoldierObs {
   bool     used;
   uint8_t  id;
+  bool     sim;      // 가상(simulation) 원본 방송 관측. 같은 ID라도 실제와 따로 보관
   uint16_t boot_id;
   uint16_t last_seq;
   int8_t   rssi_last;
@@ -34,6 +35,7 @@ static bool s_scanRetryPending = false;  // 시작 실패 후 기다리는 중(0
 static uint32_t s_scanRetryAt = 0;
 static uint32_t s_lastReport = 0;
 static bool s_enabled = true;
+static volatile bool s_testMode = ANCHOR_TEST_MODE_DEFAULT;
 static uint32_t s_scanStartedAt = 0;
 static bool s_queueWait = false;  // 큐 자리가 없어 보고를 미루는 중
 static uint32_t s_queueRetryAt = 0;
@@ -44,12 +46,12 @@ static uint32_t elapsedMs(uint32_t now, uint32_t then) {
   return d > 0 ? (uint32_t)d : 0;
 }
 
-static void recordSoldier(uint8_t id, uint16_t boot, uint16_t seq, int rssi, uint32_t now) {
+static void recordSoldier(uint8_t id, bool sim, uint16_t boot, uint16_t seq, int rssi, uint32_t now) {
   portENTER_CRITICAL(&s_mux);
   SoldierObs* o = nullptr;
   SoldierObs* freeSlot = nullptr;
   for (auto& s : s_tab) {
-    if (s.used && s.id == id) { o = &s; break; }
+    if (s.used && s.id == id && s.sim == sim) { o = &s; break; }
     // 빈 칸이 없으면 오래 안 보인 병사 칸을 재사용한다
     bool reusable = !s.used || elapsedMs(now, s.last_ms) > 2 * ANCHOR_STALE_MS;
     if (reusable && !freeSlot) freeSlot = &s;
@@ -59,6 +61,7 @@ static void recordSoldier(uint8_t id, uint16_t boot, uint16_t seq, int rssi, uin
     *o = {};
     o->used = true;
     o->id = id;
+    o->sim = sim;
     o->rssi_avg = rssi;
   }
   if (!o) {
@@ -96,11 +99,13 @@ class ScanCallbacks : public BLEAdvertisedDeviceCallbacks {
       s_stats.rx_relayed_skip++;
       return;
     }
-    if (h.flags & PKT_FLAG_SIMULATION) {  // 실제 앵커는 실제 병사 패킷만 관측한다
+    bool sim = h.flags & PKT_FLAG_SIMULATION;
+    if (sim && !s_testMode) {  // 평상시에는 실제 병사 패킷만 관측한다
       s_stats.rx_simulation_skip++;
       return;
     }
-    recordSoldier(h.node_id, h.boot_id, h.seq, dev.getRSSI(), millis());
+    if (sim) s_stats.rx_simulation++;
+    recordSoldier(h.node_id, sim, h.boot_id, h.seq, dev.getRSSI(), millis());
   }
 };
 
@@ -125,7 +130,7 @@ struct Due {
 
 static void sendOne(const SoldierObs& o) {
   PktAnchorObs p = {};
-  nodeFillHeader(p.h, PKT_ANCHOR_OBS, 0);  // 실제 관측이므로 항상 device
+  nodeFillHeader(p.h, PKT_ANCHOR_OBS, o.sim ? PKT_FLAG_SIMULATION : 0);  // 가상 원본 관측은 simulation
   uint32_t age = elapsedMs(p.h.uptime_ms, o.last_ms);  // 이 패킷의 uptime_ms 기준(서버가 수신 시각에서 뺀다)
   p.observed_node = o.id;
   p.observed_boot = o.boot_id;
@@ -150,6 +155,18 @@ void anchorSetEnabled(bool on) {
 }
 
 bool anchorEnabled() { return s_enabled && s_scan; }
+
+void anchorSetTestMode(bool on) {
+  s_testMode = on;
+  if (on) return;
+  portENTER_CRITICAL(&s_mux);
+  for (auto& o : s_tab) {
+    if (o.sim) o.used = false;  // 가상 관측은 시험이 끝나면 보고하지 않는다
+  }
+  portEXIT_CRITICAL(&s_mux);
+}
+
+bool anchorTestMode() { return s_testMode; }
 
 void anchorLoop(uint32_t now) {
   if (!s_enabled) return;
@@ -222,7 +239,7 @@ void anchorLoop(uint32_t now) {
   portENTER_CRITICAL(&s_mux);
   for (uint8_t i = 0; i < sent; i++) {
     for (auto& o : s_tab) {
-      if (!o.used || o.id != due[i].obs.id) continue;
+      if (!o.used || o.id != due[i].obs.id || o.sim != due[i].obs.sim) continue;
       o.reported = true;
       o.reported_avg = (int8_t)lroundf(due[i].obs.rssi_avg);
       o.samples = o.samples > due[i].obs.samples ? o.samples - due[i].obs.samples : 0;

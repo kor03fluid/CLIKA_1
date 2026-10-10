@@ -60,6 +60,9 @@ python server.py --serial <환경 노드 포트>
 - 중계 경유 패킷은 관측하지 않는다(`stats`의 `rx_relayed_skip`이 늘고 관측 표는 그대로).
 - 거리·위치를 바꿔 가며(예: 1m, 5m, 벽 너머) 각 2분씩 두고 위치와 시각을 적는다. 구역 추정은 팀장 담당이므로
   `report.py`의 앵커 RSSI 표를 넘긴다.
+- **앵커 시험 모드**(A의 가상 센서 보드): 가상 표시(`0x02`)로 방송하는 A 보드를 켜고 `anchor test on`. 관측 표에 같은 병사 ID가
+  `simulation`으로 따로 나오고, `stats`의 `anchor_test: true`, `rx_simulation`이 늘어야 한다. 중계 경유 가상 패킷은 여전히
+  관측하지 않는다(`rx_relayed_skip`). 끝나면 `anchor test off`(가상 관측이 표에서 빠짐).
 
 ## 5. 동시 운용 수신 누락 시험 (10분)
 

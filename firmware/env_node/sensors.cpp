@@ -91,10 +91,19 @@ void sensorsPoll(uint32_t now) {
     }
     // DHT11은 가끔 한 번씩 읽기(체크섬)가 실패한다. 한 번 실패로 null·unavailable을 보내면 패킷이 두 번 더
     // 나가므로, 연달아 DHT_FAIL_LIMIT번 실패해야 측정 불가로 본다(그동안은 직전 값).
-    s_cur.dht_ok = s_dhtFails < DHT_FAIL_LIMIT && !isnan(s_dhtTemp);
-    s_cur.humidity = s_cur.dht_ok ? s_dhtHum : NAN;
+    bool realOk = s_dhtFails < DHT_FAIL_LIMIT && !isnan(s_dhtTemp);
     s_cur.virtual_temp = !isnan(s_virtualTemp);
-    s_cur.temp_c = s_cur.virtual_temp ? s_virtualTemp : (s_cur.dht_ok ? s_dhtTemp : NAN);
+    if (s_cur.virtual_temp) {
+      // 가상 시험: 온도는 가상값, 습도는 실측이 있으면 실측·없으면 가상값. 패킷 전체가 simulation이라
+      // DHT11을 아직 연결하지 않아도 "dht11 ok = 온습도 모두 숫자" 규칙으로 받을 수 있다.
+      s_cur.dht_ok = true;
+      s_cur.temp_c = s_virtualTemp;
+      s_cur.humidity = realOk ? s_dhtHum : VTEMP_HUMIDITY_PCT;
+    } else {
+      s_cur.dht_ok = realOk;
+      s_cur.temp_c = realOk ? s_dhtTemp : NAN;
+      s_cur.humidity = realOk ? s_dhtHum : NAN;
+    }
     updateHeat();
   }
 

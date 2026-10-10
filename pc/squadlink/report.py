@@ -29,8 +29,8 @@ from .schema import validate
 
 KST = timezone(timedelta(hours=9))
 TX_KEYS = ("packets", "windows", "est_adv_events", "payload_bytes", "dropped", "adv_fail")
-ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "table_full_skip",
-               "reports", "queue_full_skip", "scan_restarts")
+ANCHOR_KEYS = ("rx_total", "rx_soldier", "rx_relayed_skip", "rx_simulation_skip", "rx_simulation",
+               "table_full_skip", "reports", "queue_full_skip", "scan_restarts")
 # 서버가 검사를 통과시킨 줄의 판정. 이 줄들의 obj만 노드별로 센다.
 ACCEPTED_RESULTS = ("ok", "late", "stale_boot", "dup", "shadowed")
 

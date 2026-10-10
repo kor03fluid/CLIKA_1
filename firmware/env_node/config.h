@@ -38,6 +38,7 @@
 // ===== 측정 주기 =====
 #define DHT_READ_MS   2000  // DHT11은 1초 이상 간격 필요
 #define DHT_FAIL_LIMIT 3    // 이만큼 연달아 실패해야 측정 불가(null)로 본다. 그 전까지는 직전 값 유지
+#define VTEMP_HUMIDITY_PCT 50.0f  // vtemp 중 DHT11 실측 습도가 없을 때 쓰는 가상 습도(패킷은 simulation)
 #define LIGHT_READ_MS 500
 
 // ===== 송신 정책 =====
@@ -72,6 +73,7 @@
 #define ANCHOR_SCAN_WATCHDOG_MS 5000 // 스캔 주기가 끝났는데 이만큼 더 끝 알림이 없으면 멈춘 것으로 보고 다시 시작
 #define ANCHOR_QUEUE_RETRY_MS   300  // 송신 큐에 자리가 없으면 이만큼 뒤에 다시 시도
 #define ANCHOR_TX_RESERVE       1    // 사건·감지 패킷용으로 비워 두는 송신 큐 칸
+#define ANCHOR_TEST_MODE_DEFAULT 0   // 1이면 부팅 때부터 시험 모드(가상 원본 방송도 관측). 시리얼 "anchor test on|off"
 #define ANCHOR_MAX_SOLDIERS     8
 #define ANCHOR_RSSI_ALPHA       0.3f  // EMA 평활 계수
 #define ANCHOR_RSSI_DELTA_DB    6     // 보고된 값 대비 이만큼 바뀌면 즉시 보고

@@ -17,6 +17,8 @@ Arduino 센서 라이브러리 모음.
 | 폴더 | 내용 | 상태 |
 |---|---|---|
 | `docs/data_spec_v1.md` | SQUAD LINK 공통 데이터 규격 v1 (팀 공유 문서 원문) | - |
+| `docs/appendix_a_ble.md` | 공통 규격 부록 A 초안: BLE 바이트 배치·숫자 ID(`env_02` = `0x32`)·JSON 변환. 팀원 B와 확정 중 | 초안 |
+| `docs/lead_handoff/` (`docs/C_to_lead_env_anchor.zip`) | 팀장 서버 수신 확장용 자료: `packet.h`, JSON 예시 줄(실측·가상), 기존 앵커 수신 코드, 팀장 서버 점검 결과 | 팀장에게 전달 |
 | `docs/C_작업현황.docx` | 팀원 C 작업 현황(Word): 역할 분담, 작업 현황, 팀장 코드와 합치기, 도착 후 시험, 남은 것, 정할 것 | 팀장·팀원 공유용 |
 | `docs/c_reply_lead.md` | 팀장 인수인계에 대한 C 회신: 진행 현황, 팀장 PC 코드와 겹치는 부분·합치는 방법, 연동 시 맞출 점 | 팀장에게 전달 |
 | `docs/c_hw_test.md` | 팀원 C 실물 시험 절차와 기록표(단독 확인·연동·수신 누락·송신량·전류·인계) | 실물 도착 후 사용 |

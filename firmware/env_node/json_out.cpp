@@ -22,12 +22,14 @@ static void jsonBegin(const PktHeader& h, const char* packet_type) {
                 (h.flags & PKT_FLAG_SIMULATION) ? "simulation" : "device", (unsigned long)h.uptime_ms);
 }
 
-static void jsonEnd() {
-  // 환경 노드를 PC에 직접 USB로 연결한 경로: 자기 자신이 USB 출력 노드, 무선 수신 아님
+static void jsonEnd(const PktHeader& h) {
+  // 환경 노드를 PC에 직접 USB로 연결한 경로: 자기 자신이 USB 출력 노드, 무선 수신 아님.
+  // 가상(source simulation) 패킷은 route "simulation"이다(규격 예시, 팀장 서버는 다른 route를 거부).
   char name[16];
   nodeName(NODE_ID, name, sizeof(name));
-  Serial.printf("},\"transport\":{\"gateway_id\":\"%s\",\"route\":\"direct\",\"hop_count\":0,"
-                "\"relay_id\":null,\"rssi_dbm\":null}}\n", name);
+  Serial.printf("},\"transport\":{\"gateway_id\":\"%s\",\"route\":\"%s\",\"hop_count\":0,"
+                "\"relay_id\":null,\"rssi_dbm\":null}}\n",
+                name, (h.flags & PKT_FLAG_SIMULATION) ? "simulation" : "direct");
 }
 
 static void printTri(const char* key, uint8_t v) {
@@ -60,7 +62,7 @@ void printEnvironmentJson(const PktEnvironment& p) {
   }
   Serial.print("}");
   for (const Opt& o : opt) printTri(o.field, (p.detected >> o.dt) & 3);
-  jsonEnd();
+  jsonEnd(p.h);
 }
 
 void printEventJson(const PktEvent& p) {
@@ -72,7 +74,7 @@ void printEventJson(const PktEvent& p) {
   Serial.printf("\"event_id\":\"%s:boot_%04x:%s:%u\",\"event_type\":\"%s\",\"mode\":\"%s\"",
                 name, (unsigned)p.h.boot_id, type, (unsigned)p.event_no, type,
                 MODE_NAMES[p.mode == MODE_COVERT ? 1 : 0]);
-  jsonEnd();
+  jsonEnd(p.h);
 }
 
 void printAnchorObsJson(const PktAnchorObs& p) {
@@ -84,5 +86,5 @@ void printAnchorObsJson(const PktAnchorObs& p) {
                 "\"observed_seq\":%u,\"rssi_dbm\":%d,\"observation_age_ms\":%u",
                 anchorName, observedName, (unsigned)p.observed_boot, (unsigned)p.observed_seq,
                 (int)p.rssi_dbm, (unsigned)p.age_ms);
-  jsonEnd();
+  jsonEnd(p.h);
 }

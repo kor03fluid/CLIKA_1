@@ -66,5 +66,19 @@ int main() {
   a.rssi_dbm = -58;
   a.age_ms = 300;
   printAnchorObsJson(a);
+
+  // 6) vtemp로 생긴 열 노출 사건(가상) → source·route "simulation"
+  PktEvent ev2 = ev;
+  ev2.h = header(PKT_EVENT, 0x31, 0x1a2b, 5, 51000, PKT_FLAG_EVENT | PKT_FLAG_SIMULATION);
+  ev2.event_no = 2;
+  printEventJson(ev2);
+
+  // 7) 앵커 시험 모드: A의 가상 센서 보드(simulation 원본 방송) 관측 → simulation
+  PktAnchorObs a2 = a;
+  a2.h = header(PKT_ANCHOR_OBS, 0x31, 0x1a2b, 6, 52000, PKT_FLAG_SIMULATION);
+  a2.observed_boot = 0x00b7;
+  a2.observed_seq = 12;
+  a2.rssi_dbm = -64;
+  printAnchorObsJson(a2);
   return 0;
 }

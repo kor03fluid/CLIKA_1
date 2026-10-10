@@ -21,7 +21,7 @@ PC에서 빌드·실행해 서버의 규격 검사기로 확인하고, `boot_id`
 | `env_node.ino` | setup/loop, 송신 정책, 시리얼 명령, 진단 줄 |
 | `json_out.cpp/.h` | 규격 v1 JSON 출력, 숫자 ID → 문자열 ID |
 | `config.h` | 노드 ID, 핀, 임계값, 주기, 광고·스캔 설정 |
-| `packet.h` | BLE 무선 패킷 초안 v2 (**바이트 배치는 팀원 B와 확정**) |
+| `packet.h` | BLE 무선 패킷 초안 v2 (**바이트 배치는 팀원 B와 확정**, 문서는 [`docs/appendix_a_ble.md`](../../docs/appendix_a_ble.md) 부록 A) |
 | `node.cpp/.h` | boot_id·seq·uptime_ms |
 | `sensors.cpp/.h` | 센서 읽기, 감지 래치, 열 노출 판단, 가상 온도 |
 | `ble_tx.cpp/.h` | 광고 송신 큐, 송신량 통계 |
@@ -61,12 +61,14 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 ## USB 시리얼 출력 (115200bps)
 
 데이터 줄은 규격 v1 그대로다. PC에 직접 연결한 경로이므로 `transport`는 자기 자신이 USB 출력 노드
-(`gateway_id: "env_01"`, `route: "direct"`, `rssi_dbm: null`)다. 아래는 실제 출력 코드가 낸 줄이다.
+(`gateway_id: "env_01"`, `route: "direct"`, `rssi_dbm: null`)다. 가상(`source: "simulation"`) 패킷은 `route: "simulation"`이다
+(규격 예시, 팀장 서버 입력 검사). 아래는 실제 출력 코드가 낸 줄이다(마지막 줄은 `vtemp`로 생긴 가상 열 노출 사건).
 
 ```json
 {"schema_version":"1.0","packet_type":"environment","node_id":"env_01","boot_id":"boot_1a2b","seq":1,"source":"device","uptime_ms":10000,"payload":{"air_temperature_c":24.5,"humidity_pct":52,"light_raw":1730,"heartbeat_interval_ms":30000,"sensor_status":{"dht11":"ok","light":"ok","sound":"ok","flame":"ok","shock":"ok","reed":"ok"},"sound_detected":false,"flame_detected":true,"shock_detected":false,"reed_closed":true},"transport":{"gateway_id":"env_01","route":"direct","hop_count":0,"relay_id":null,"rssi_dbm":null}}
 {"schema_version":"1.0","packet_type":"event","node_id":"env_01","boot_id":"boot_1a2b","seq":3,"source":"device","uptime_ms":50000,"payload":{"event_id":"env_01:boot_1a2b:heat_exposure:1","event_type":"heat_exposure","mode":"normal"},"transport":{"gateway_id":"env_01","route":"direct","hop_count":0,"relay_id":null,"rssi_dbm":null}}
 {"schema_version":"1.0","packet_type":"anchor_observation","node_id":"env_01","boot_id":"boot_1a2b","seq":4,"source":"device","uptime_ms":50300,"payload":{"anchor_id":"env_01","observed_node_id":"halo_01","observed_boot_id":"boot_00a1","observed_seq":1,"rssi_dbm":-58,"observation_age_ms":300},"transport":{"gateway_id":"env_01","route":"direct","hop_count":0,"relay_id":null,"rssi_dbm":null}}
+{"schema_version":"1.0","packet_type":"event","node_id":"env_01","boot_id":"boot_1a2b","seq":214,"source":"simulation","uptime_ms":1504250,"payload":{"event_id":"env_01:boot_1a2b:heat_exposure:2","event_type":"heat_exposure","mode":"normal"},"transport":{"gateway_id":"env_01","route":"simulation","hop_count":0,"relay_id":null,"rssi_dbm":null}}
 ```
 
 필드 규칙:
@@ -78,7 +80,9 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 - `heartbeat_interval_ms`: 지금 선언하는 정상 보고 주기. 적응 모드 평상시 30000, 열 노출·불꽃 중 10000, 고정 모드 5000.
   서버 두절 기준은 `max(15000, 3 × 주기 + 2000)` → 92초 / 32초 / 17초.
 - 열 노출 주의(`heat_exposure`)는 공기 온도 기준이다(개인 체온·과열 아님). 환경 노드에는 기도비닉 모드가 없어 `mode`는 항상 `normal`.
-- `vtemp`로 가상 온도를 넣는 동안 `environment`와 그 온도로 생긴 사건은 `source: "simulation"`이다.
+- `vtemp`로 가상 온도를 넣는 동안 `environment`와 그 온도로 생긴 사건은 `source: "simulation"`·`route: "simulation"`이다.
+  DHT11 실측이 없으면(아직 연결 전 등) 습도는 가상값 50%로 채우고 `dht11: "ok"`로 낸다(패킷 전체가 가상이고,
+  "dht11 ok면 온습도 모두 숫자" 규칙을 지키기 위해서).
   사건의 출처는 사건이 생긴 시점에 정한다(큐가 차서 기다리는 사이 `vtemp off` 해도 가상으로 나감).
   앵커 관측은 실제 관측이라 계속 `device`다.
 - `seq`는 패킷 종류와 출처(`device`/`simulation`)를 통틀어 부팅 내에서 1부터 증가하고 재사용하지 않는다(규격 4장).
@@ -90,7 +94,7 @@ arduino-cli compile --fqbn esp32:esp32:esp32 \
 
 ```text
 # {"type":"boot","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor":true,"schema_version":"1.0"}
-# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor_enabled":true,"uptime_ms":61234,"tx":{...},"anchor":{...}}
+# {"type":"stats","node_id":"env_01","boot_id":"boot_1a2b","tx_mode":"adaptive","anchor_enabled":true,"anchor_test":false,"uptime_ms":61234,"tx":{...},"anchor":{...}}
 # {"type":"warn","node_id":"env_01","boot_id":"boot_1a2b","msg":"unknown command: foo"}
 ```
 
@@ -103,12 +107,14 @@ ESP32 자체 부팅 메시지(ROM 로그)는 JSON이 아니어서 서버가 데�
 | `stats` | 송신량·앵커 수신 통계(진단 줄) |
 | `mode fixed` / `mode adaptive` | 송신 정책 전환 |
 | `anchor off` / `anchor on` | 앵커 스캔·보고 끄기/켜기(스캔으로 늘어난 전류·송신량 비교용. 끄면 병사 표를 비움) |
+| `anchor test on` / `anchor test off` | 앵커 시험 모드: 가상(`0x02`) 원본 병사 방송(A의 가상 센서 보드)도 관측해 `source: "simulation"` 관측으로 보고. 끄면 가상 관측을 지움. 중계 패킷은 계속 제외 |
 | `vtemp 38` / `vtemp off` | 가상 온도 주입/해제(−40~100 숫자만) |
 | `send` | 환경 패킷 즉시 1회 송신 |
 
 ## BLE 무선 패킷 초안 v2 (`packet.h`) → 규격 v1 JSON
 
 **바이트 배치는 팀원 B가 확정한다.** 아래는 환경 노드가 지금 쓰는 안과, 게이트웨이가 JSON으로 바꿀 때의 대응이다.
+공통 규격의 부록 A 초안(오프셋·숫자 ID·변환 규칙·B와 확정할 것)은 [`docs/appendix_a_ble.md`](../../docs/appendix_a_ble.md).
 BLE 레거시 광고 제조사 데이터(회사 ID `0xFFFF` = SIG 시험용), 페이로드 최대 24B, little-endian.
 
 공통 머리 11B:
@@ -136,7 +142,9 @@ BLE 레거시 광고 제조사 데이터(회사 ID `0xFFFF` = SIG 시험용), �
   JSON으로 펼쳤을 때 같은 seq가 여러 줄 생겨 중복으로 버려진다.
 - 반복 광고와 중계는 머리를 그대로 유지한다(규격 4장).
 - 앵커는 병사 패킷(종류 1·2·5, ID `0x01~0x1F`)의 머리만 해석하므로 병사 본문 형식과 무관하다.
-  중계됨(`0x01`)·가상(`0x02`) 패킷은 관측하지 않는다.
+  중계됨(`0x01`) 패킷은 관측하지 않는다. 가상(`0x02`) 원본은 평상시 버리고, 시험 모드(`anchor test on`)에서만 관측해
+  가상 관측(`source: "simulation"`)으로 보고한다. 실제·가상 관측은 같은 병사 ID라도 따로 보관한다.
+- 열 노출 사건(`heat_exposure`)은 환경 노드가 만들고 서버는 받기만 한다(팀장 확정).
 
 ## 송신 정책
 
@@ -167,9 +175,11 @@ BLE 레거시 광고 제조사 데이터(회사 ID `0xFFFF` = SIG 시험용), �
 
 실물 도착 후 시험 순서와 기록표는 [`docs/c_hw_test.md`](../../docs/c_hw_test.md).
 
-- [ ] 팀원 B와 BLE 바이트 배치·숫자 ID 변환표·회사 ID 확정 (`packet.h`, `json_out.cpp`). B 담당 형식이라 합의 전 임의 변경 금지
-- [ ] 팀장: 열 노출 사건(`heat_exposure`)은 환경 노드가 직접 만든다는 점 공유(서버가 온도로 따로 만들면 중복)
-- [ ] 팀장 서버의 `anchor_observation` 수신 지원 뒤 앵커 보고 연동 확인(지금은 거부됨)
+- [ ] 팀원 B와 부록 A 초안(`docs/appendix_a_ble.md`)으로 BLE 바이트 배치·숫자 ID(`env_02` = `0x32`)·회사 ID·중계기 ID 전달 확정.
+  B 담당 형식이라 합의 전 임의 변경 금지
+- [x] 열 노출 사건(`heat_exposure`)은 환경 노드가 만들고 서버는 받기만 한다(팀장 확정)
+- [ ] 팀장 서버의 환경 노드 사건·`anchor_observation` 수신 확장(팀장 담당) 뒤 연동 확인
+- [ ] A의 가상 센서 BLE 보드로 앵커 시험 모드(`anchor test on`) 확인
 - [ ] 실물 핀·센서 전압·활성 레벨 확인
 - [ ] 조도 단선·포화 판정 기준 (현재 항상 `ok`)
 - [ ] 열 노출 임계값·변화 기준을 센서 로그로 조정

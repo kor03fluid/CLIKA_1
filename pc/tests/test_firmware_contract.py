@@ -5,6 +5,7 @@
 서로 다른 형식을 써도 드러나지 않기 때문이다. C++ 컴파일러가 없으면 빌드 시험은 건너뛴다.
 """
 
+import json
 import os
 import re
 import shutil
@@ -54,13 +55,13 @@ class FirmwareJsonOutputTest(unittest.TestCase):
 
     def test_every_line_is_valid_v1(self):
         pkts = self.packets()
-        self.assertEqual(len(pkts), 5)
+        self.assertEqual(len(pkts), 7)
         for p in pkts:
             pkt, errors, warnings = validate(p)
             self.assertEqual((errors, warnings), ([], []), p)
 
     def test_field_values(self):
-        e1, e2, e3, ev, a = self.packets()
+        e1, e2, e3, ev, a, ev_sim, a_sim = self.packets()
         self.assertEqual((e1["node_id"], e1["boot_id"], e1["source"]), ("env_01", "boot_1a2b", "device"))
         self.assertEqual(e1["payload"]["air_temperature_c"], 24.5)
         self.assertEqual(e1["payload"]["heartbeat_interval_ms"], 30000)
@@ -81,6 +82,14 @@ class FirmwareJsonOutputTest(unittest.TestCase):
                                         "rssi_dbm": -58, "observation_age_ms": 300})
         self.assertEqual(a["transport"], {"gateway_id": "env_01", "route": "direct", "hop_count": 0,
                                           "relay_id": None, "rssi_dbm": None})
+        # 가상(simulation) 원본은 route도 "simulation"(규격 예시·팀장 서버 검사)
+        for p in (e2, ev_sim, a_sim):
+            self.assertEqual((p["source"], p["transport"]["route"], p["transport"]["hop_count"]),
+                             ("simulation", "simulation", 0), p["packet_type"])
+        for p in (e1, e3, ev, a):
+            self.assertEqual((p["source"], p["transport"]["route"]), ("device", "direct"))
+        self.assertEqual(ev_sim["payload"]["event_id"], "env_01:boot_1a2b:heat_exposure:2")
+        self.assertEqual((a_sim["payload"]["observed_boot_id"], a_sim["payload"]["observed_seq"]), ("boot_00b7", 12))
 
     def test_server_accepts_the_stream(self):
         hub, clock = new_hub()
@@ -89,7 +98,8 @@ class FirmwareJsonOutputTest(unittest.TestCase):
         snap = hub.snapshot()
         env = snap["environment_nodes"][0]
         self.assertEqual(env["node_id"], "env_01")
-        self.assertEqual([e["event_type"] for e in hub.list_events()], ["heat_exposure"])
+        self.assertEqual([(e["event_type"], e["source"]) for e in hub.list_events()],
+                         [("heat_exposure", "device"), ("heat_exposure", "simulation")])
         self.assertEqual(snap["anchor_observations"][0]["observed_node_id"], "halo_01")
 
 
@@ -173,6 +183,18 @@ class FirmwareSourceTest(unittest.TestCase):
         for name in os.listdir(FW_DIR):
             if name.endswith((".cpp", ".ino", ".h")) and name != "json_out.cpp":
                 self.assertIsNone(pattern.search(read(name)), name)
+
+    def test_lead_handoff_samples_are_valid_v1(self):
+        # 팀장에게 보낸 예시 줄(docs/lead_handoff)이 규격 v1과 맞고, 가상판은 source·route가 simulation
+        base = os.path.join(FW_DIR, "..", "..", "docs", "lead_handoff")
+        for name, source, route in (("samples_device.ndjson", "device", "direct"),
+                                    ("samples_simulation.ndjson", "simulation", "simulation")):
+            with open(os.path.join(base, name), encoding="utf-8") as f:
+                pkts = [json.loads(l) for l in f if l.strip()]
+            self.assertEqual([p["packet_type"] for p in pkts], ["environment", "event", "anchor_observation"])
+            for p in pkts:
+                self.assertEqual(validate(p)[1:], ([], []), p)
+                self.assertEqual((p["source"], p["transport"]["route"]), (source, route))
 
     def test_readme_examples_are_valid_v1(self):
         lines = [l for l in read("README.md").splitlines() if l.startswith('{"schema_version"')]

@@ -1,18 +1,120 @@
 # C → 팀장: 환경 노드·앵커 연동 자료
 
-기준 2026-10-10 · 저장소 `kor03fluid/CLIKA_1` `main`. 팀장 코드 `SQUAD_LINK_step1.zip` 확인 후 작성.
+기준 2026-10-10 · 팀장 코드 `SQUAD_LINK_step1.zip` 확인 후 작성.
+
+**펌웨어 기준 커밋**: `kor03fluid/CLIKA_1` `main` **`1ef7cd429cd92df99c340db61b798bcef5d64d65`** (`1ef7cd4`), 펌웨어 판 `fw` = `0.4.0`.
+`env_node_src/`는 이 커밋의 `firmware/env_node/`를 그대로 담은 것이다(Arduino 스케치 폴더, 빌드 방법은 그 안의 README).
 
 ## 1. 요청하신 자료
 
 | 파일 | 내용 |
 |---|---|
-| `packet.h` | 환경 노드 BLE 패킷 정의(초안 v2) 현재본. 펌웨어 원본은 `firmware/env_node/packet.h` |
+| `packet.h` | 환경 노드가 지금 쓰는 무선 규격(BLE 패킷 정의, 초안 v2). `env_node_src/packet.h`와 같음 |
+| `env_node_src/` | 위 커밋의 환경 노드 펌웨어 소스 전체 |
 | `samples_device.ndjson` | JSON 원문 한 줄씩: ① `environment` ② 열 노출 사건 `event` ③ `anchor_observation` (실측, `source: "device"`) |
 | `samples_simulation.ndjson` | 같은 세 줄의 가상판(`vtemp` 시험·앵커 시험 모드, `source`·`route` = `"simulation"`). 개발 서버가 simulation 모드라 바로 넣어 볼 수 있음 |
 | `anchor_receive_reference.py` | C 시험 서버의 기존 `anchor_observation` 수신 코드 발췌(검사·보관·화면 출력)와 규칙 요약 |
 | `appendix_a_ble.md` | 공통 규격 부록 A 초안(BLE 바이트 배치·숫자 ID·JSON 변환). B와 확정 중 |
 
-세 예시 줄은 모두 환경 노드 펌웨어의 실제 JSON 출력 코드(`json_out.cpp`)를 PC에서 빌드해 만든 것이다.
+세 예시 줄은 모두 환경 노드 펌웨어의 실제 JSON 출력 코드(`json_out.cpp`)를 PC에서 빌드해 만든 것이다. 아래는 같은 줄을
+생략 없이 펼친 것이다(USB로는 한 줄 NDJSON으로 나간다).
+
+### 환경 (`environment`, 실측)
+
+```json
+{
+  "schema_version": "1.0",
+  "packet_type": "environment",
+  "node_id": "env_01",
+  "boot_id": "boot_1a2b",
+  "seq": 140,
+  "source": "device",
+  "uptime_ms": 812400,
+  "payload": {
+    "air_temperature_c": 36.2,
+    "humidity_pct": 41,
+    "light_raw": 2210,
+    "heartbeat_interval_ms": 10000,
+    "sensor_status": {
+      "dht11": "ok",
+      "light": "ok",
+      "sound": "ok",
+      "flame": "ok",
+      "shock": "ok",
+      "reed": "ok"
+    },
+    "sound_detected": false,
+    "flame_detected": false,
+    "shock_detected": false,
+    "reed_closed": true
+  },
+  "transport": {
+    "gateway_id": "env_01",
+    "route": "direct",
+    "hop_count": 0,
+    "relay_id": null,
+    "rssi_dbm": null
+  }
+}
+```
+
+### 환경 열 노출 사건 (`event`, `heat_exposure`, 실측)
+
+```json
+{
+  "schema_version": "1.0",
+  "packet_type": "event",
+  "node_id": "env_01",
+  "boot_id": "boot_1a2b",
+  "seq": 141,
+  "source": "device",
+  "uptime_ms": 812450,
+  "payload": {
+    "event_id": "env_01:boot_1a2b:heat_exposure:1",
+    "event_type": "heat_exposure",
+    "mode": "normal"
+  },
+  "transport": {
+    "gateway_id": "env_01",
+    "route": "direct",
+    "hop_count": 0,
+    "relay_id": null,
+    "rssi_dbm": null
+  }
+}
+```
+
+### 앵커 관측 (`anchor_observation`, 실측)
+
+```json
+{
+  "schema_version": "1.0",
+  "packet_type": "anchor_observation",
+  "node_id": "env_01",
+  "boot_id": "boot_1a2b",
+  "seq": 142,
+  "source": "device",
+  "uptime_ms": 813100,
+  "payload": {
+    "anchor_id": "env_01",
+    "observed_node_id": "halo_01",
+    "observed_boot_id": "boot_3c41",
+    "observed_seq": 208,
+    "rssi_dbm": -61,
+    "observation_age_ms": 420
+  },
+  "transport": {
+    "gateway_id": "env_01",
+    "route": "direct",
+    "hop_count": 0,
+    "relay_id": null,
+    "rssi_dbm": null
+  }
+}
+```
+
+가상판(`samples_simulation.ndjson`)은 `source`·`transport.route`가 `"simulation"`이고, 가상 센서 모드라 습도 50%,
+앵커 관측은 시험 모드에서 A의 가상 방송을 관측한 것이다. 그 밖의 필드 구성은 같다.
 
 ## 2. 확정·반영한 것
 
@@ -21,6 +123,7 @@
 | 열 노출 사건 | 환경 노드가 만들고 서버는 받기만 한다. 공기 온도 35°C 이상 생성, 34°C 이하 해제. `event_id` = `env_01:boot_xxxx:heat_exposure:<번호>`, `mode`는 항상 `normal` |
 | 가상 패킷 `route` | 가상(`source: "simulation"`) 패킷은 `route: "simulation"`으로 바꿨다. 이전에는 `direct`라서 팀장 서버 입력 검사에 걸렸다 |
 | `vtemp` 중 습도 | DHT11 실측이 없으면 가상 습도 50%로 채우고 `dht11: "ok"`(팀장 서버의 "dht11 ok ↔ 온습도 모두 숫자" 규칙) |
+| 센서 없는 시험 | 시리얼 `vsensor on`이면 DHT11·조도가 가상값, 추가 센서는 `vdetect`로만 감지를 넣는다. 켜져 있는 동안 모든 환경 패킷·사건은 `source: "simulation"`. 부팅·`stats` 진단 줄에 `fw`·`vsensor`·`vtemp`·`anchor_test`가 나와 시험 조건을 남긴다 |
 | 앵커 시험 모드 | 시리얼 `anchor test on`이면 가상 표시가 있는 병사 원본 방송(A의 가상 센서 BLE)도 관측해 `source: "simulation"` 관측으로 보고한다. 실제·가상 관측은 따로 보관. 중계 패킷 제외는 유지. `anchor test off`로 끄면 가상 관측을 지움. 기본은 꺼짐 |
 | `seq` | 부팅 안에서 패킷 종류·실측/가상을 통틀어 하나의 번호열(팀장 서버의 노드 단위 순서 검사와 맞음) |
 

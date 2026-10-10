@@ -27,11 +27,8 @@
 
 ### 2-2. 라이브러리
 
-1. 받은 ZIP을 풀면 `CLIKA_1-main` 폴더가 생긴다.
-2. 그 안의 폴더 두 개를 Arduino `libraries` 아래로 **폴더째** 복사한다(위치는 파일 → 기본 설정 → 스케치북 위치 아래 `libraries`, OneDrive 아래일 수 있음).
-   - `DHT-sensor-library`
-   - `Adafruit_Sensor`
-3. Arduino IDE를 껐다 켠다.
+**설치할 것이 없다.** DHT11 읽기 코드는 펌웨어 폴더 안(`dht_reader.*`, Adafruit DHT 라이브러리 MIT)에 들어 있고, 조도는 `analogRead`로 읽는다.
+이미 `DHT-sensor-library` 등을 설치했어도 상관없다(펌웨어는 폴더 안의 것을 쓴다).
 
 ## 3. 펌웨어 열기와 보드 설정
 
@@ -94,7 +91,7 @@
 | 도구 → 포트에 아무것도 없음 | 데이터 케이블인지 확인(다른 케이블로), 다른 USB 포트에 꽂기, 장치 관리자에 "알 수 없는 장치"가 있는지 확인 |
 | 업로드 중 `No DFU capable USB device available` 등 DFU 오류 | 보드의 **RST 버튼을 빠르게 두 번** 눌러 부트로더 모드로 넣는다 → 도구 → 포트에서 새로 잡힌 포트를 고른다 → 다시 업로드 |
 | 그래도 DFU 장치를 못 찾음(Windows 드라이버) | 보드 매니저에서 **Arduino ESP32 Boards**(by Arduino)도 한 번 설치하면 Nano ESP32용 드라이버가 같이 깔린다. 그 뒤 보드는 다시 esp32 → Arduino Nano ESP32로 고른다 |
-| `DHT.h: No such file or directory` | 2-2 라이브러리 복사를 다시 한다(폴더째, `libraries` 바로 아래). IDE 재시작 |
+| `DHT.h`·`Adafruit_Sensor.h`·`RBD_LightSensor.h: No such file` | 예전 펌웨어다. main을 다시 받는다(커밋 `36171e5` 이후는 라이브러리가 필요 없다) |
 | `ADV_TYPE_NONCONN_IND` 또는 `setTxBufferSize` 오류 | 예전 펌웨어다. main을 다시 받는다(커밋 `0632f1f` 이후) |
 | 시리얼 모니터에 아무것도 안 나옴 | 115200 확인. 업로드 직후·`reboot` 뒤에는 모니터를 닫았다 다시 연다. 3초 넘게 기다린다(첫 보고는 약 3초 뒤) |
 | 글자가 깨져 보임 | baud 115200 확인 |

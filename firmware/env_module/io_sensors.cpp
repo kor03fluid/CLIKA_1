@@ -1,7 +1,7 @@
 #include "io_sensors.h"
 #include "config.h"
 #include <Arduino.h>
-#include <DHT.h>
+#include "dht_reader.h"  // Adafruit DHT(MIT)를 펌웨어 폴더에 넣은 것. 라이브러리 설치 불필요
 
 static DHT s_dht(PIN_DHT, DHT11);
 

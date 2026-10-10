@@ -156,14 +156,13 @@ USB에는 규격 JSON 줄만 나간다(규격 2장). 진단 줄(`# {...}`)은 `d
 Arduino IDE 2:
 
 1. 보드 매니저에서 **esp32 by Espressif 3.x**를 설치한다.
-2. 저장소의 `DHT-sensor-library`, `Adafruit_Sensor`를 Arduino `libraries`에 복사한다(조도는 `analogRead`로 직접 읽어 `RBD_LightSensor`는 필요 없다).
+2. 라이브러리는 설치하지 않아도 된다. DHT11 읽기는 폴더 안의 `dht_reader.*`(Adafruit DHT sensor library, MIT, `dht_reader_LICENSE.txt`)이고, 조도는 `analogRead`로 읽는다.
 3. `firmware/env_module/env_module.ino`를 열고, 보드를 `ESP32 Dev Module`(WROOM) 또는 `Arduino Nano ESP32`(esp32 by Espressif 목록 안)로 골라 업로드한다.
 
 arduino-cli(저장소 루트):
 
 ```sh
 arduino-cli compile --fqbn esp32:esp32:esp32 \
-  --library DHT-sensor-library --library Adafruit_Sensor \
   firmware/env_module
 ```
 

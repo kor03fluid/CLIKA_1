@@ -1,0 +1,64 @@
+{
+  "app": {
+    "name": "SQUAD LINK",
+    "schema_version": "1.0"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "broadcast_interval_ms": 1000,
+    "max_body_chars": 65536
+  },
+  "squad": {
+    "soldier_count": 8,
+    "node_ids": [
+      "halo_01",
+      "halo_02"
+    ]
+  },
+  "communication": {
+    "minimum_timeout_ms": 15000,
+    "heartbeat_multiplier": 3,
+    "grace_ms": 2000,
+    "dedup_limit": 10000
+  },
+  "simulation": {
+    "gateway_id": "gateway_01",
+    "heartbeat_interval_ms": 5000,
+    "heart_rate_bpm": [
+      78,
+      82
+    ],
+    "mode": "normal",
+    "motion_state": "moving"
+  },
+  "ui": {
+    "timezone": "Asia/Seoul",
+    "default_event_tab": "pending",
+    "fallback_poll_ms": 2000
+  },
+  "input": {
+    "mode": "simulation",
+    "driver": "simulator"
+  },
+  "environment": {
+    "node_ids": [
+      "env_01"
+    ],
+    "adc_max": 4095,
+    "gps_stale_ms": 30000
+  },
+  "storage": {
+    "enabled": true,
+    "event_file": "data/events.json",
+    "audit_file": "data/telemetry.ndjson"
+  },
+  "serial": {
+    "port": "COM3",
+    "baud_rate": 115200,
+    "read_timeout_seconds": 0.5,
+    "http_timeout_seconds": 2,
+    "reconnect_seconds": 2,
+    "max_line_bytes": 65536
+  }
+}

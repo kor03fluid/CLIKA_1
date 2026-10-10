@@ -1,7 +1,7 @@
 # VS Code에서 실행하기 (Windows 기준)
 
 저장소에 VS Code 실행 설정(`.vscode/launch.json`, `.vscode/tasks.json`)이 들어 있어서, 폴더를 열고 목록에서 고른 뒤
-**F5**로 실행한다. 팀장 관제 서버(`squad-link`)는 별도 폴더이므로 VS Code 창을 하나 더 띄운다.
+**F5**로 실행한다. 팀장 공식 관제 서버도 저장소의 `squad-link/`에 들어 있어(팀장 원본 그대로) 같은 창에서 실행한다.
 
 ## 1. 한 번만 준비
 
@@ -10,7 +10,7 @@
 | [VS Code](https://code.visualstudio.com/) | 편집·실행 | — |
 | [Python 3.9 이상](https://www.python.org/downloads/) — 설치 첫 화면에서 **"Add python.exe to PATH"** 체크 | C 시험 서버·도구 | 터미널에서 `python --version` |
 | VS Code 확장 **Python**(Microsoft) | F5 실행·디버그 | 폴더를 열면 "권장 확장 설치" 알림이 뜬다 |
-| [Node.js 18 이상](https://nodejs.org/) | 팀장 관제 서버 | `node --version` |
+| [Node.js LTS(22 이상)](https://nodejs.org/) | 팀장 관제 서버(`squad-link`) | `node --version` |
 | pyserial | USB(COM) 연결할 때만 | 아래 2-2 |
 | Arduino IDE 2 또는 arduino-cli | 펌웨어 업로드할 때만 | 아래 4 |
 
@@ -30,6 +30,9 @@ Python 인터프리터를 묻거나 실행이 안 되면 **Ctrl+Shift+P → "Pyt
 | 4. 팀장 서버로 펌웨어 JSON 예시 보내기 | 환경·열 노출 사건·앵커 예시 줄을 팀장 서버 `/api/ingest`로 보냄(아래 3) | `http://localhost:8080` |
 | 5. 로그 요약 (report.py) | 수신·누락·송신량·시험 조건·오류 표. `logs/`를 주면 가장 최근 실행을 요약 | 터미널 출력 |
 | 6. 단위 테스트 | 서버·도구 시험(C++ 컴파일러가 없으면 펌웨어 시험은 건너뜀) | 터미널 출력 |
+| **7. 팀장 관제 서버 (공식, squad-link, 8080)** | 팀장의 공식 관제 화면(가상 병사 2명, 시연 버튼) | `http://localhost:8080` |
+| 8. 팀장 USB 브리지 | 보드 USB 줄을 팀장 서버로 전달(아래 3-2, 설정 먼저) | 팀장 화면 |
+| 9. 팀장 관제 서버 + C 시험 서버 같이 켜기 | 7번과 1번을 한 번에(멈추면 둘 다 꺼짐) | 8080·8090 |
 
 ### 2-1. 보드 없이 바로 해 보기
 
@@ -49,17 +52,36 @@ Python 인터프리터를 묻거나 실행이 안 되면 **Ctrl+Shift+P → "Pyt
 5. 화면의 **장치 명령** 칸에서 `stats`, 센서가 없으면 `vsensor on`, `vdetect sound`, `vtemp 38` 등을 보낸다.
 6. 끝나면 **5. 로그 요약** → `logs/` 그대로 Enter → 가장 최근 실행이 요약된다.
 
-## 3. 팀장 관제 서버와 같이 쓰기
+## 3. 팀장 관제 서버 (`squad-link/`)
 
-1. VS Code 창을 하나 더 열고(**파일 → 새 창**) 팀장 코드 `squad-link` 폴더를 연다.
-2. 그 창의 터미널(**Ctrl+`**)에서 `node server.mjs` → `http://localhost:8080`.
-3. `CLIKA_1` 창에서 **4. 팀장 서버로 펌웨어 JSON 예시 보내기** → F5 → 예시 파일 고르기.
-   - 팀장 서버 기본 `input.mode`는 `simulation`이라 `samples_simulation.ndjson`을 고른다(실측 예시는 `device` 모드에서 받음).
-   - 지금은 환경 패킷만 받고, 열 노출 사건·앵커 관측은 팀장 서버 확장 전이라 거부(`REJECT 400`)가 정상이다.
-4. 실제 환경 노드 USB를 팀장 서버에 바로 붙일 때는 팀장 문서(`docs/USB_SETUP.md`)대로 `config/system.json`의 `input.driver`를
-   `serial`, `serial.port`를 COM 번호로 바꾸고 `python communication/serial_bridge.py`를 실행한다. 이때 C 시험 서버는 같은 COM을 열지 않는다.
+`squad-link/`는 팀장이 준 `SQUAD_LINK_step1.zip`을 **그대로** 넣은 것이다(서버 수정은 팀장 담당이라 C는 고치지 않는다).
+팀장이 새 ZIP을 주면 `squad-link/` 폴더를 통째로 바꾼다. 설명서는 `squad-link/README.md`, `squad-link/docs/`.
+
+### 3-1. 가상으로 보기 + 우리 펌웨어 JSON 보내기
+
+1. **7. 팀장 관제 서버** → F5 → 터미널에 `SQUAD LINK: http://localhost:8080 (가상 데이터)` → 브라우저 `http://localhost:8080`.
+2. 그대로 둔 채 **4. 팀장 서버로 펌웨어 JSON 예시 보내기** → F5 → `samples_simulation.ndjson`.
+   - 팀장 서버 기본 `input.mode`는 `simulation`이라 가상판을 고른다(실측 예시는 `device` 모드에서 받음).
+   - 환경 패킷은 "환경 · 위치"에 표시된다. 열 노출 사건·앵커 관측은 팀장 서버 확장 전이라 거부(`REJECT 400`)가 정상이다.
+3. 끌 때는 디버그 막대의 빨간 네모(Shift+F5). C 시험 서버까지 함께 보려면 **9번**.
+
+### 3-2. 환경 노드 보드를 팀장 서버에 바로 연결
+
+팀장 문서(`squad-link/docs/USB_SETUP.md`)대로 `squad-link/config/system.json`을 바꾼다.
+
+| 항목 | 값 |
+|---|---|
+| `input.driver` | `"serial"` (자동 가상 병사가 꺼진다) |
+| `serial.port` | 환경 노드 COM (예: `"COM5"`) |
+| `input.mode` | 센서 실측이면 `"device"`, `vsensor`·`vtemp` 시험이면 `"simulation"` (서버는 한 출처만 받는다) |
+| `environment.node_ids` | 예비 보드를 쓰면 `"env_02"` 추가 |
+
+그다음 **7. 팀장 관제 서버** F5 → **8. 팀장 USB 브리지** F5. 브리지 터미널에 받은 줄마다 `accepted:true`가 나오고,
+`# `로 시작하는 진단 줄은 `SKIP: invalid NDJSON`으로 넘어간다(정상). 같은 COM은 한 프로그램만 열 수 있으니 C 시험 서버(2·3번)와
+Arduino 시리얼 모니터는 끈다. 시험이 끝나면 `system.json`을 원래대로(`simulator`, `simulation`) 돌린다.
 
 두 서버는 포트가 달라(C 시험 8090, 팀장 8080) 한 노트북에서 같이 켤 수 있다.
+팀장 서버 자체 시험은 **Tasks: Run Task → "팀장 서버 테스트 (node --test)"**.
 
 ## 4. 펌웨어 업로드
 

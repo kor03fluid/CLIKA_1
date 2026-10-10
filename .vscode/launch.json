@@ -6,7 +6,10 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pc/server.py",
-      "args": ["--virtual", "demo"],
+      "args": [
+        "--virtual",
+        "demo"
+      ],
       "cwd": "${workspaceFolder}/pc",
       "console": "integratedTerminal"
     },
@@ -15,7 +18,10 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pc/server.py",
-      "args": ["--serial", "${input:comPort}"],
+      "args": [
+        "--serial",
+        "${input:comPort}"
+      ],
       "cwd": "${workspaceFolder}/pc",
       "console": "integratedTerminal"
     },
@@ -24,7 +30,14 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pc/server.py",
-      "args": ["--serial", "${input:comPort}", "--virtual", "normal", "--virtual-nodes", "halo_01,halo_02"],
+      "args": [
+        "--serial",
+        "${input:comPort}",
+        "--virtual",
+        "normal",
+        "--virtual-nodes",
+        "halo_01,halo_02"
+      ],
       "cwd": "${workspaceFolder}/pc",
       "console": "integratedTerminal"
     },
@@ -33,7 +46,9 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pc/send_ndjson.py",
-      "args": ["${input:ndjsonFile}"],
+      "args": [
+        "${input:ndjsonFile}"
+      ],
       "cwd": "${workspaceFolder}/pc",
       "console": "integratedTerminal"
     },
@@ -42,7 +57,9 @@
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/pc/report.py",
-      "args": ["${input:logDir}"],
+      "args": [
+        "${input:logDir}"
+      ],
       "cwd": "${workspaceFolder}/pc",
       "console": "integratedTerminal"
     },
@@ -51,8 +68,28 @@
       "type": "debugpy",
       "request": "launch",
       "module": "unittest",
-      "args": ["discover", "-s", "tests"],
+      "args": [
+        "discover",
+        "-s",
+        "tests"
+      ],
       "cwd": "${workspaceFolder}/pc",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "7. 팀장 관제 서버 (공식, squad-link, 8080)",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/squad-link/server.mjs",
+      "cwd": "${workspaceFolder}/squad-link",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "8. 팀장 USB 브리지 (보드 → 팀장 서버, config/system.json 설정 먼저)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/squad-link/communication/serial_bridge.py",
+      "cwd": "${workspaceFolder}/squad-link",
       "console": "integratedTerminal"
     }
   ],
@@ -67,7 +104,10 @@
       "id": "ndjsonFile",
       "type": "pickString",
       "description": "보낼 예시 (팀장 서버 input.mode와 출처를 맞추기: 기본 simulation)",
-      "options": ["../docs/lead_handoff/samples_simulation.ndjson", "../docs/lead_handoff/samples_device.ndjson"],
+      "options": [
+        "../docs/lead_handoff/samples_simulation.ndjson",
+        "../docs/lead_handoff/samples_device.ndjson"
+      ],
       "default": "../docs/lead_handoff/samples_simulation.ndjson"
     },
     {
@@ -75,6 +115,16 @@
       "type": "promptString",
       "description": "요약할 로그 폴더 (pc/logs 아래 시작 시각 폴더, 예: logs/20261010-120000)",
       "default": "logs/"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "9. 팀장 관제 서버 + C 시험 서버(가상 시연) 같이 켜기",
+      "configurations": [
+        "7. 팀장 관제 서버 (공식, squad-link, 8080)",
+        "1. C 시험 서버: 가상 시연 (demo, 보드 없이)"
+      ],
+      "stopAll": true
     }
   ]
 }

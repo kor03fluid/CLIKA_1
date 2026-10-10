@@ -2,3 +2,5 @@
 pc/logs/
 __pycache__/
 *.pyc
+# 팀장 관제 서버가 만드는 사건·처리 로그 저장 파일
+squad-link/data/

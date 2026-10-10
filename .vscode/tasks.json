@@ -5,7 +5,9 @@
       "label": "준비: pyserial 설치 (USB 연결 전에 한 번)",
       "type": "shell",
       "command": "python -m pip install -r requirements.txt",
-      "options": { "cwd": "${workspaceFolder}/pc" },
+      "options": {
+        "cwd": "${workspaceFolder}/pc"
+      },
       "problemMatcher": []
     },
     {
@@ -15,10 +17,22 @@
       "problemMatcher": []
     },
     {
+      "label": "팀장 서버 테스트 (node --test)",
+      "type": "shell",
+      "command": "node --test \"tests/*.test.mjs\"",
+      "options": {
+        "cwd": "${workspaceFolder}/squad-link"
+      },
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "펌웨어 빌드 (arduino-cli)",
       "type": "shell",
       "command": "arduino-cli compile --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_node",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "group": "build",
       "problemMatcher": []
     },
@@ -26,7 +40,9 @@
       "label": "펌웨어 업로드 (arduino-cli)",
       "type": "shell",
       "command": "arduino-cli compile --upload -p ${input:comPort} --fqbn esp32:esp32:esp32 --library DHT-sensor-library --library Adafruit_Sensor --library RBD_LightSensor firmware/env_node",
-      "options": { "cwd": "${workspaceFolder}" },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
       "problemMatcher": []
     },
     {

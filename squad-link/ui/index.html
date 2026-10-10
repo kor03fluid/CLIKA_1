@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SQUAD LINK 관제</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="masthead">
+ <div class="brand"><span class="brand-mark" aria-hidden="true">SL</span><div><p class="eyebrow">SQUAD STATUS / LOCAL CONTROL</p><h1 id="app-name">SQUAD LINK</h1></div></div>
+ <div class="connection"><span class="tag">가상 데이터</span><span id="server">서버 연결 중</span></div>
+</header>
+<div id="error" role="alert" hidden></div>
+<main>
+ <section class="overview" aria-label="분대 현황"><div><p class="eyebrow">LIVE OVERVIEW</p><h2>분대 상태</h2></div><div id="summary" class="metrics" aria-live="polite"></div></section>
+ <div class="workspace">
+  <section class="roster-panel" aria-labelledby="roster-title"><div class="section-heading"><h2 id="roster-title">분대원</h2><span>선택하여 상세 확인</span></div><div id="roster"></div><section id="soldier-detail" aria-label="선택한 병사 상세"></section></section>
+  <section class="event-panel" aria-labelledby="event-title"><div class="section-heading"><h2 id="event-title">사건 목록</h2><span>확인과 조치 종료는 별도</span></div>
+   <div class="event-tabs" role="group" aria-label="사건 목록 필터"><button data-tab="pending" aria-pressed="true">처리할 사건 <span id="pending-count">0</span></button><button data-tab="completed" aria-pressed="false">처리 완료 <span id="completed-count">0</span></button></div>
+   <div id="events" aria-live="polite"></div>
+   <section class="telemetry-panel"><div class="section-heading"><h2>환경 · 위치</h2><span>수신 데이터 기준</span></div><div id="telemetry"></div></section>
+  </section>
+ </div>
+ <details class="demo-panel" open><summary>시연 제어 <span>가상 노드 시험</span></summary><p id="action-status" role="status"></p><div class="demo-buttons"><button data-demo="sos" class="sos-button">병사 01 SOS 발생</button><button data-demo="stop">병사 02 송신 중단</button><button data-demo="resume">병사 02 송신 복구</button><button data-demo="reset" class="reset-button">시연 초기화 · 사건 삭제</button></div><p id="demo-help"></p></details>
+ <footer><span>체온 실측 미구현 · 실제 USB/BLE 연결 검증 전</span><span>LOCAL NETWORK / SQUAD LINK</span></footer>
+</main>
+<script type="module" src="/app.mjs"></script>
+</body></html>

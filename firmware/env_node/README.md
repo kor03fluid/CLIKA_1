@@ -86,7 +86,7 @@ BLE 레거시 광고, 제조사 데이터(회사 ID `0xFFFF` = SIG 시험용) �
 출력 예:
 
 ```json
-{"type":"env","node":49,"boot":3,"seq":12,"reason":"heartbeat","mode":"adaptive","temp":24.0,"hum":41,"light":63,"valid":63,"events":[],"state":[],"virtual":false,"ms":61234}
+{"type":"env","node":49,"boot":3,"seq":12,"reason":"heartbeat","tx_mode":"adaptive","temp":24.0,"hum":41,"light":63,"valid":63,"events":[],"state":[],"virtual":false,"ms":61234}
 {"type":"anchor","anchor":49,"boot":3,"seq":13,"obs":[{"soldier":1,"last_seq":88,"rssi":-61,"rssi_avg":-63,"n":7,"age_ms":400}],"ms":62010}
 ```
 

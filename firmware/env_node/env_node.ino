@@ -33,7 +33,7 @@ static void printBits(const char* key, uint8_t bits, const char* const names[], 
 static void printEnvJson(const PktEnv& p, const char* reason) {
   static const char* const evNames[] = {"sound", "flame", "shock", "reed", "heat"};
   static const char* const stNames[] = {"heat", "flame", "reed_open"};
-  Serial.printf("{\"type\":\"env\",\"node\":%u,\"boot\":%u,\"seq\":%u,\"reason\":\"%s\",\"mode\":\"%s\"",
+  Serial.printf("{\"type\":\"env\",\"node\":%u,\"boot\":%u,\"seq\":%u,\"reason\":\"%s\",\"tx_mode\":\"%s\"",
                 p.h.node_id, p.h.boot_id, p.h.seq, reason, modeName());
   if (p.temp_c10 == ENV_TEMP_INVALID) Serial.print(",\"temp\":null,\"hum\":null");
   else Serial.printf(",\"temp\":%.1f,\"hum\":%u", p.temp_c10 / 10.0f, p.humidity);
@@ -126,7 +126,7 @@ static void envTxPolicy(uint32_t now) {
 static void printStats() {
   const TxStats& t = bleTxStats();
   const AnchorStats& a = anchorStats();
-  Serial.printf("{\"type\":\"stats\",\"node\":%u,\"boot\":%u,\"mode\":\"%s\",\"uptime_ms\":%lu,"
+  Serial.printf("{\"type\":\"stats\",\"node\":%u,\"boot\":%u,\"tx_mode\":\"%s\",\"uptime_ms\":%lu,"
                 "\"tx\":{\"packets\":%lu,\"windows\":%lu,\"est_adv_events\":%lu,\"payload_bytes\":%lu,"
                 "\"dropped\":%lu},"
                 "\"anchor\":{\"rx_total\":%lu,\"rx_soldier\":%lu,\"rx_relayed_skip\":%lu,"
@@ -168,7 +168,7 @@ void setup() {
 #if ANCHOR_ENABLE
   anchorBegin();
 #endif
-  Serial.printf("{\"type\":\"boot\",\"node\":%u,\"boot\":%u,\"mode\":\"%s\",\"anchor\":%s}\n", NODE_ID,
+  Serial.printf("{\"type\":\"boot\",\"node\":%u,\"boot\":%u,\"tx_mode\":\"%s\",\"anchor\":%s}\n", NODE_ID,
                 nodeBootId(), modeName(), ANCHOR_ENABLE ? "true" : "false");
 }
 

@@ -177,7 +177,8 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
     const next = {status: report.status, equipment: text(report.equipment, 60, '장비 이름'),
       reasons: list(report.reasons, 4, '판정 사유').map(r => text(r, 120, '판정 사유')),
       items, reporter: text(report.reporter, 40, '보고자') || '정비 시스템'};
-    const ids = list(report.resolved_event_ids, 50, '종료 사건').map(id => text(id, 200, '사건 ID'));
+    // ids that cannot match an event are skipped, never a reason to refuse the whole report
+    const ids = list(report.resolved_event_ids, 50, '종료 사건').filter(id => typeof id === 'string');
     const before = s.maintenance;
     const changed = !before || JSON.stringify(next) !== JSON.stringify({status: before.status, equipment: before.equipment,
       reasons: before.reasons, items: before.items, reporter: before.reporter});
@@ -193,6 +194,7 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
     revision++;
     return {accepted: true, changed, resolved, record: structuredClone(s.maintenance)};
   }
+  const maintenanceOf = node => structuredClone(soldiers.find(s => s.assigned_node_id && s.assigned_node_id === node)?.maintenance ?? null);
   function snapshot() {
     checkTimeouts();
     return {schema_version: config.app.schema_version, revision, server_time: iso(), source: config.input.mode,
@@ -210,5 +212,5 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
     events=structuredClone(data.events.filter(e=>e.source===config.input.mode));
     incidentIds=new Set(data.incident_ids);revision++;
   }
-  return {reset, ingest, snapshot, action,archive,restore,maintenance};
+  return {reset, ingest, snapshot, action,archive,restore,maintenance,maintenanceOf};
 }

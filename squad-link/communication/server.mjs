@@ -8,6 +8,8 @@ import {makeState} from '../core/state.mjs';
 import {config as defaults,browserConfig} from '../core/config.mjs';
 import {createSimulator} from './simulator.mjs';
 
+/** Host header naming this machine by localhost or an IP address (any port). */
+const localHost=h=>{const m=/^(\[[0-9a-f:.]+\]|[^:]+)(?::\d+)?$/i.exec(String(h||'').trim());if(!m)return false;const n=m[1].toLowerCase();return n==='localhost'||n.endsWith('.localhost')||/^\d{1,3}(\.\d{1,3}){3}$/.test(n)||n.startsWith('[');};
 export function createApp({config=defaults,persistence=config.storage.enabled}={}) {
   const state = makeState({config}), streams = new Set();
   const audit=persistence?createAuditLog(resolve(fileURLToPath(new URL('../',import.meta.url)),config.storage.audit_file)):null;
@@ -41,11 +43,14 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
     res.end(JSON.stringify(data));
   }
   async function body(req) {
-    let chunks='';
+    // decode once at the end: a multi-byte character split between two network chunks stays intact
+    const chunks=[];let size=0;
     for await (const chunk of req) {
-      chunks+=chunk; if (chunks.length>config.server.max_body_chars) throw Error('요청 데이터가 너무 큽니다.');
+      size+=chunk.length; if (size>config.server.max_body_chars) throw Error('요청 데이터가 너무 큽니다.');
+      chunks.push(chunk);
     }
-    return chunks?JSON.parse(chunks):{};
+    const text=Buffer.concat(chunks).toString('utf8');
+    return text?JSON.parse(text):{};
   }
   const server = http.createServer(async (req,res) => {
     try {
@@ -68,12 +73,14 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
         return json(res,200,{ok:true,state:currentSnapshot()});
       }
       if (req.method==='POST' && path==='/api/maintenance') {
+        // a page that re-points its own domain at this server (DNS rebinding) names it by that domain in Host
+        if(!localHost(req.headers.host))throw Object.assign(Error('정비 보고는 localhost·IP 주소로 접속한 요청만 받습니다.'),{status:421});
         // JSON only: a plain form or text post from another web page is refused before it changes anything
         if(!/^application\/json\s*(;|$)/i.test(req.headers['content-type']||''))throw Object.assign(Error('정비 보고는 application/json 으로 보내야 합니다.'),{status:415});
         const report=await body(req);const {record,...result}=state.maintenance(report);
         audit?.write('maintenance_report',{source:config.input.mode,node_id:report.node_id,status:report.status,reporter:report.reporter||null});
         for(const event_id of result.resolved)audit?.write('incident_action',{source:config.input.mode,event_id,action:'resolve',by:'maintenance'});
-        if(simulated)simulator.maintenance(report.node_id,record);
+        if(simulated)simulator.maintenance(report.node_id,record,result.resolved);
         broadcast();return json(res,200,{ok:true,...result});
       }
       if (req.method==='POST' && path.startsWith('/api/events/')) {

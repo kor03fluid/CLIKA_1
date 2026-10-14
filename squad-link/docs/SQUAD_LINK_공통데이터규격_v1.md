@@ -344,7 +344,9 @@ USB 출력은 **UTF-8 NDJSON**이다. JSON 객체 하나를 한 줄에 출력하
 | `event_state` | string enum | `open`, `acknowledged`, `resolved` |
 | `first_received_at` | string | 사건 최초 수신 시각 |
 | `acknowledged_at` | string 또는 null | 지휘관 확인 시각 |
-| `resolved_at` | string 또는 null | 지휘관 조치 종료 시각 |
+| `resolved_at` | string 또는 null | 조치 종료 시각 (지휘관, 또는 충격 관측 사건은 정비 점검) |
+| `resolved_by` | string 또는 없음 | `maintenance`: 정비 시스템이 점검을 끝내 종료한 충격 관측 사건. 없으면 지휘관 종료 |
+| `maintenance` | object 또는 null | 병사 장비 상태 보고: `status`(`go`·`limited`·`nogo`), `equipment`, `reasons`, `items`(`id`·`kind`·`label`·`state`=`open`·`repaired`·`monitor`), `reporter`, `reported_at`, `changed_at`. 보고 전 `null` |
 
 UTC 예시: `2026-10-10T01:49:00Z`. 관제는 한국 시간으로 표시한다. `uptime_ms`를 UTC 발생 시각이라고 표시하지 않는다. 시간 동기화 전에는 사건 최초 수신 시각을 기본으로 보여준다. 통신 두절 경과 계산에는 서버의 단조 증가 시간을 사용해 PC 시계 조정 영향을 줄인다.
 

@@ -35,6 +35,7 @@ PC 내부 수신 경계: POST /api/ingest, JSON 객체 1개, Content-Type applic
 USB: UTF-8 NDJSON. 브리지가 한 줄을 한 HTTP 요청으로 전달. Arduino 시리얼 모니터와 동시 점유 금지.
 GET /api/state 상태, GET /api/stream SSE state, GET /api/config 공개 화면 설정.
 POST /api/events/{event_id}/ack 또는 resolve.
+POST /api/maintenance: 정비 시스템(HoloHand AI 정비)의 병사별 장비 상태 보고와 점검을 끝낸 충격 관측 사건 종료 (JSON, localhost·IP 접속만). 형식은 README '장비 정비 연동' 참조.
 accepted:false는 중복·오래된 순번 등 의도적 미반영이며 HTTP 200. 형식 오류는 HTTP 400과 error.
 현재 지원: soldier_status, event, environment, gps. 전체 필드는 공통 규격 MD.
 중복 키는 source+node_id+boot_id+seq. 순번은 노드의 모든 패킷 유형에 공통. 원본·중계는 같은 키 유지.

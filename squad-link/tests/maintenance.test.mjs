@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {makeState} from '../core/state.mjs';
 import {createSimulator} from '../communication/simulator.mjs';
 import {createApp} from '../communication/server.mjs';
-import {config,timeoutMs} from '../core/config.mjs';
+import {config,timeoutMs,validateConfig} from '../core/config.mjs';
 
 function fixture(){
   let elapsed=0;
@@ -107,7 +107,7 @@ test('manual stop, switching off and the issue button',()=>{
   s.tick();at(5000);s.tick();assert.equal(state.snapshot().events.length,0,'off: nothing happens');
   s.action('stop');s.action('random_on');s.tick();at(10000);s.tick();
   assert.deepEqual(s.snapshot().random_issues.nodes.map(n=>!!n.pending),[true,false],'a manually stopped node gets no issue');
-  assert.throws(()=>s.action('issue'),/정비를 기다리는/);
+  assert.throws(()=>s.action('issue'),/줄 수 있는 노드가 없습니다/);
   s.action('resume');s.action('issue');
   assert.deepEqual(s.snapshot().random_issues.nodes.map(n=>!!n.pending),[true,true]);
   s.action('random_off');assert.equal(s.snapshot().random_issues.enabled,false);
@@ -127,5 +127,77 @@ test('the maintenance endpoint takes JSON only and shows the report to every vie
     const state=await fetch(base+'/api/state').then(r=>r.json());
     assert.equal(state.soldiers[0].maintenance.status,'limited');
     assert.ok(state.demo.random_issues,'the demo snapshot lists the random issue state');
+  }finally{await app.stop();}
+});
+
+test('an issue merged into an item maintenance already tracks, or closed through its impact id, still ends',()=>{
+  const {s,state,give,at}=sim({randoms:[0,0,0,0,0,0]});
+  give('halo_01','limited',[{kind:'impact',state:'open'}]); // still open from before a demo reset
+  s.tick();at(1000);s.tick();
+  const ev=state.snapshot().events.find(e=>e.node_id==='halo_01'&&e.event_type==='impact');
+  const r=state.maintenance(report('halo_01','go',{resolved_event_ids:[ev.event_id]}));
+  s.maintenance('halo_01',r.record,r.resolved);
+  assert.equal(s.snapshot().random_issues.nodes[0].pending,null,'known item: the closing go ends it');
+  // halo_02 had nothing open: only its own resolved impact id counts as seen
+  const ev2=state.snapshot().events.find(e=>e.node_id==='halo_02'&&e.event_type==='impact');
+  const r2=state.maintenance(report('halo_02','go',{resolved_event_ids:[ev2.event_id]}));
+  s.maintenance('halo_02',r2.record,r2.resolved);
+  assert.equal(s.snapshot().random_issues.nodes[1].pending,null,'closing its impact is seeing it');
+});
+
+test('monitoring or an unrelated report never repairs the simulated IMU; closing the item does',()=>{
+  const {s,node,give,at}=sim({randoms:[0,0,0.6,0]});
+  s.tick();at(1000);s.tick();
+  assert.equal(node('halo_01').payload.sensor_status.imu,'unavailable');
+  give('halo_01','limited',[{kind:'impact',state:'open'}]);
+  assert.equal(node('halo_01').payload.sensor_status.imu,'unavailable','a report without the fault item');
+  give('halo_01','limited',[{kind:'fault',state:'monitor'}]);
+  assert.equal(node('halo_01').payload.sensor_status.imu,'unavailable','관찰 is not a repair');
+  give('halo_01','go');
+  assert.equal(node('halo_01').payload.sensor_status.imu,'ok','item closed after inspection');
+});
+
+test('stop holds the countdown, resume ends a random outage, SOS is refused while node 1 is silent',()=>{
+  const {s,state,at}=sim({randoms:[0,0,0,0,0.9]});
+  s.tick();s.action('stop');at(500);s.tick();
+  assert.deepEqual([s.snapshot().random_issues.nodes[1].held,s.snapshot().random_issues.nodes[1].next_in_ms],[true,null]);
+  s.action('resume');at(1000);s.tick();
+  assert.equal(s.snapshot().random_issues.nodes[1].pending,null,'no issue the moment it resumes');
+  at(2000);s.tick();at(3000);s.tick();
+  assert.equal(s.snapshot().random_issues.nodes[1].pending,'link');
+  s.action('resume');
+  assert.deepEqual([s.snapshot().stopped_node_ids,s.snapshot().random_issues.nodes[1].pending],[[],null],'resume also ends a random outage');
+  const c=structuredClone(config);c.simulation.random_issues={enabled:true,min_delay_ms:1000,max_delay_ms:1000,outage_ms:30000};
+  let t=0;const st=makeState({config:c});const s0=createSimulator(st,c,{random:()=>0.9,now:()=>t});s0.reset();
+  s0.tick();t=1000;s0.tick();
+  assert.throws(()=>s0.action('sos'),/SOS/);
+  assert.equal(st.snapshot().events.length,0);
+  void state;
+});
+
+test('random issue settings are validated; over-long event ids are skipped, not fatal',()=>{
+  for(const bad of [{enabled:'yes',min_delay_ms:1,max_delay_ms:2,outage_ms:3},{enabled:true,min_delay_ms:5,max_delay_ms:2,outage_ms:3},{enabled:true,min_delay_ms:1.5,max_delay_ms:2,outage_ms:3},null]){
+    const c=structuredClone(config);c.simulation.random_issues=bad;
+    assert.throws(()=>validateConfig(c),/설정 오류/);
+  }
+  const {state,status}=fixture();state.ingest(status);
+  assert.deepEqual(state.maintenance(report('halo_01','go',{resolved_event_ids:['x'.repeat(300),7]})).resolved,[]);
+});
+
+test('the endpoint keeps Korean text split across network chunks and refuses rebinding hosts',async()=>{
+  const app=createApp({persistence:false});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));
+  const port=app.server.address().port;
+  const {request}=await import('node:http');
+  const post=(body,host)=>new Promise((resolve,reject)=>{
+    const req=request({host:'127.0.0.1',port,path:'/api/maintenance',method:'POST',headers:{'Content-Type':'application/json',...(host?{Host:host}:{})}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>resolve({status:res.statusCode,body:d}));});
+    req.on('error',reject);
+    const buf=Buffer.from(body);const cut=buf.indexOf(Buffer.from('헤'))+1;
+    req.write(buf.subarray(0,cut));setTimeout(()=>req.end(buf.subarray(cut)),20);
+  });
+  try{
+    assert.equal((await post(JSON.stringify(report('halo_01','go',{equipment:'헤일로 장비'})))).status,200);
+    const state=await fetch(`http://127.0.0.1:${port}/api/state`).then(r=>r.json());
+    assert.equal(state.soldiers[0].maintenance.equipment,'헤일로 장비');
+    assert.equal((await post(JSON.stringify(report('halo_01','go',{equipment:'헤일로'})),'attacker.example:8080')).status,421);
   }finally{await app.stop();}
 });

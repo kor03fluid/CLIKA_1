@@ -9,10 +9,12 @@ function render(state){
  latestState=state;
  const stopped=state.demo?.stopped_node_ids||[];
  const stoppedSoldiers=state.soldiers.filter(s=>stopped.includes(s.assigned_node_id));
- $('#action-status').textContent=stoppedSoldiers.map(s=>s.connection_state==='lost'?`병사 ${s.soldier_id.slice(-2)} · 통신 두절 감지됨`:`병사 ${s.soldier_id.slice(-2)} · 송신 중단됨 · 두절 판정까지 약 ${Math.max(0,Math.ceil((s.timeout_ms-s.age_ms)/1000))}초`).join(' / ');
+ const randomOut=new Set((state.demo?.random_issues?.nodes||[]).filter(n=>n.pending==='link').map(n=>n.node_id));
+ $('#action-status').textContent=stoppedSoldiers.map(s=>`병사 ${s.soldier_id.slice(-2)} · ${randomOut.has(s.assigned_node_id)?'무작위 송신 중단 (잠시 후 자동 복구)':'송신 중단됨'}${s.connection_state==='lost'?' · 통신 두절 감지됨':` · 두절 판정까지 약 ${Math.max(0,Math.ceil((s.timeout_ms-s.age_ms)/1000))}초`}`).join(' / ');
  const ri=state.demo?.random_issues;
  $('#random-status').textContent=ri?`무작위 이슈 ${ri.enabled?'켜짐':'꺼짐'} · `+ri.nodes.map(n=>{
   const who=(s=>s?`병사 ${s.soldier_id.slice(-2)}`:n.node_id)(state.soldiers.find(s=>s.assigned_node_id===n.node_id));
+  if(n.held)return `${who} 송신 중단 중 · 이슈 보류`;
   return n.pending?`${who} ${issueLabels[n.pending]||n.pending} — ${n.pending==='link'?'송신 복구 대기':'정비 완료 대기'}`:n.next_in_ms!=null?`${who} 다음 이슈 ${soon(n.next_in_ms)}`:`${who} 대기`;
  }).join(' · '):'';
  const toggle=$('#random-toggle');if(ri&&toggle){toggle.dataset.demo=ri.enabled?'random_off':'random_on';toggle.textContent=ri.enabled?'무작위 이슈 끄기':'무작위 이슈 켜기';}

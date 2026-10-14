@@ -5,9 +5,9 @@
 | server.mjs | 서버 실행·종료 진입점 |
 | config/system.json | 전체 운용 설정의 단일 원본 |
 | core/config.mjs | 설정 읽기·검증, 공통 두절 계산 |
-| core/state.mjs | 병사 상태, SOS 병합, 사건 처리, 두절 판단 |
+| core/state.mjs | 병사 상태, SOS 병합, 사건 처리, 두절 판단, 장비 정비 보고 |
 | communication/server.mjs | HTTP API, SSE 동기화, 정적 화면 전달 |
-| communication/simulator.mjs | 가상 장치 패킷 생성·시연 조작 |
+| communication/simulator.mjs | 가상 장치 패킷 생성·시연 조작·무작위 이슈 |
 | ui/index.html | 화면 구조 |
 | ui/app.mjs | 서버 설정·상태 수신, 사건 탭, 화면 조작 |
 | ui/style.css | 화면 스타일 |

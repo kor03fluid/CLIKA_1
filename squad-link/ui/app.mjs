@@ -1,4 +1,6 @@
 import {rosterView,detailView,eventsView,telemetryView} from './views.mjs';
+const issueLabels={impact:'충격',fault:'센서 고장',link:'송신 중단'};
+const soon=ms=>ms<60000?`약 ${Math.max(1,Math.ceil(ms/1000))}초 후`:`약 ${Math.round(ms/60000)}분 후`;
 const $=s=>document.querySelector(s);
 let config,selectedTab,selectedSoldier,latestState=null,pollBusy=false;
 const time=t=>t?new Date(t).toLocaleTimeString('ko-KR',{timeZone:config.ui.timezone,hour12:false}):'없음';
@@ -8,10 +10,16 @@ function render(state){
  const stopped=state.demo?.stopped_node_ids||[];
  const stoppedSoldiers=state.soldiers.filter(s=>stopped.includes(s.assigned_node_id));
  $('#action-status').textContent=stoppedSoldiers.map(s=>s.connection_state==='lost'?`병사 ${s.soldier_id.slice(-2)} · 통신 두절 감지됨`:`병사 ${s.soldier_id.slice(-2)} · 송신 중단됨 · 두절 판정까지 약 ${Math.max(0,Math.ceil((s.timeout_ms-s.age_ms)/1000))}초`).join(' / ');
+ const ri=state.demo?.random_issues;
+ $('#random-status').textContent=ri?`무작위 이슈 ${ri.enabled?'켜짐':'꺼짐'} · `+ri.nodes.map(n=>{
+  const who=(s=>s?`병사 ${s.soldier_id.slice(-2)}`:n.node_id)(state.soldiers.find(s=>s.assigned_node_id===n.node_id));
+  return n.pending?`${who} ${issueLabels[n.pending]||n.pending} — ${n.pending==='link'?'송신 복구 대기':'정비 완료 대기'}`:n.next_in_ms!=null?`${who} 다음 이슈 ${soon(n.next_in_ms)}`:`${who} 대기`;
+ }).join(' · '):'';
+ const toggle=$('#random-toggle');if(ri&&toggle){toggle.dataset.demo=ri.enabled?'random_off':'random_on';toggle.textContent=ri.enabled?'무작위 이슈 끄기':'무작위 이슈 켜기';}
  const eventScroll=$('#events').scrollTop,telemetryScroll=$('#telemetry').scrollTop;
  selectedSoldier=state.soldiers.some(s=>s.soldier_id===selectedSoldier)?selectedSoldier:state.soldiers[0]?.soldier_id;
  const pending=state.events.filter(e=>e.event_state!=='resolved'),completed=state.events.filter(e=>e.event_state==='resolved');
- const metrics=[['분대원',state.soldiers.length,''],['연결',state.soldiers.filter(s=>s.connection_state==='connected').length,'fine'],['통신 두절',state.soldiers.filter(s=>s.connection_state==='lost').length,'warn'],['확인 전',state.events.filter(e=>e.event_state==='open').length,'danger']];
+ const metrics=[['분대원',state.soldiers.length,''],['연결',state.soldiers.filter(s=>s.connection_state==='connected').length,'fine'],['통신 두절',state.soldiers.filter(s=>s.connection_state==='lost').length,'warn'],['확인 전',state.events.filter(e=>e.event_state==='open').length,'danger'],['장비 정비',state.soldiers.filter(s=>['limited','nogo'].includes(s.maintenance?.status)).length,'warn']];
  $('#summary').innerHTML=metrics.map(([label,value,cls])=>`<div class="metric ${value?cls:''}"><span>${label}</span><strong>${value.toString().padStart(2,'0')}</strong></div>`).join('');
  $('#pending-count').textContent=pending.length;$('#completed-count').textContent=completed.length;
  document.querySelectorAll('[data-tab]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.tab===selectedTab)));

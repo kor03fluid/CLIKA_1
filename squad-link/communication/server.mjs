@@ -18,6 +18,7 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
     audit?.packet(packet,result);return result;
   };
   const simulator=createSimulator(state,config);
+  const simulated=config.input.mode==='simulation'&&config.input.driver==='simulator';
   const store=persistence?createEventStore(resolve(fileURLToPath(new URL('../',import.meta.url)),config.storage.event_file)):null;
   const saved=store?.load();
   const loggedLinks=new Set();
@@ -66,6 +67,15 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
         simulator.action(demoAction); broadcast();
         return json(res,200,{ok:true,state:currentSnapshot()});
       }
+      if (req.method==='POST' && path==='/api/maintenance') {
+        // JSON only: a plain form or text post from another web page is refused before it changes anything
+        if(!/^application\/json\s*(;|$)/i.test(req.headers['content-type']||''))throw Object.assign(Error('정비 보고는 application/json 으로 보내야 합니다.'),{status:415});
+        const report=await body(req);const {record,...result}=state.maintenance(report);
+        audit?.write('maintenance_report',{source:config.input.mode,node_id:report.node_id,status:report.status,reporter:report.reporter||null});
+        for(const event_id of result.resolved)audit?.write('incident_action',{source:config.input.mode,event_id,action:'resolve',by:'maintenance'});
+        if(simulated)simulator.maintenance(report.node_id,record);
+        broadcast();return json(res,200,{ok:true,...result});
+      }
       if (req.method==='POST' && path.startsWith('/api/events/')) {
         const [, , , event_id,action]=path.split('/');
         state.action(decodeURIComponent(event_id),action);audit?.write('incident_action',{source:config.input.mode,event_id:decodeURIComponent(event_id),action});broadcast();return json(res,200,{ok:true,state:currentSnapshot()});
@@ -77,7 +87,7 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
         res.end(await readFile(new URL(`../ui/${files[path]}`,import.meta.url)));return;
       }
       json(res,404,{error:'없는 경로입니다.'});
-    } catch (e) {json(res,400,{error:e.message});}
+    } catch (e) {json(res,e.status||400,{error:e.message});}
   });
   if(config.input.mode==='simulation'&&config.input.driver==='simulator')simulator.reset();
   state.restore(saved);
@@ -85,7 +95,7 @@ export function createApp({config=defaults,persistence=config.storage.enabled}={
   audit?.write('server_started',{source:config.input.mode,driver:config.input.driver,restored_events:state.archive().events.length});
   store?.save(state.archive());
   const timers=[setInterval(broadcast,config.server.broadcast_interval_ms)];
-  if(config.input.mode==='simulation'&&config.input.driver==='simulator')timers.push(setInterval(()=>{simulator.statuses();broadcast();},config.simulation.heartbeat_interval_ms));
+  if(simulated)timers.push(setInterval(()=>{simulator.statuses();broadcast();},config.simulation.heartbeat_interval_ms),setInterval(()=>{if(simulator.tick())broadcast();},1000));
   function stop() {
     currentSnapshot();audit?.write('server_stopped',{source:config.input.mode});
     timers.forEach(clearInterval); for (const res of streams) res.end();

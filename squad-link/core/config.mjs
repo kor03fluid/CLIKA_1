@@ -13,6 +13,12 @@ export function validateConfig(c) {
   for(const [k,v] of Object.entries(c.server))if(k.endsWith('_ms')||k==='max_body_chars')positive(v,k);
   for(const [k,v] of Object.entries(c.communication))positive(v,k);
   positive(c.simulation.heartbeat_interval_ms,'heartbeat_interval_ms');
+  const ri=c.simulation.random_issues;
+  if(ri!==undefined){
+   if(!ri||typeof ri.enabled!=='boolean')throw Error('설정 오류: simulation.random_issues.enabled');
+   for(const k of ['min_delay_ms','max_delay_ms','outage_ms'])positive(ri[k],'random_issues.'+k);
+   if(ri.min_delay_ms>ri.max_delay_ms)throw Error('설정 오류: random_issues.min_delay_ms는 max_delay_ms 이하여야 합니다.');
+  }
   if(!Array.isArray(c.squad.node_ids)||c.squad.node_ids.length<2||c.squad.node_ids.length>c.squad.soldier_count||new Set(c.squad.node_ids).size!==c.squad.node_ids.length||c.squad.node_ids.some(n=>typeof n!=='string'||!n))throw Error('설정 오류: 장치 ID는 중복 없이 최소 2개, 병사 수 이하로 지정하세요.');
   if(c.simulation.heart_rate_bpm.length!==c.squad.node_ids.length||c.simulation.heart_rate_bpm.some(v=>!Number.isFinite(v)||v<=0))throw Error('설정 오류: 장치마다 양의 가상 심박값을 지정하세요.');
   if(!['normal','covert'].includes(c.simulation.mode)||!['moving','still','unknown'].includes(c.simulation.motion_state))throw Error('설정 오류: 가상 운용 모드·움직임');
@@ -23,4 +29,4 @@ export function validateConfig(c) {
 }
 export const config=validateConfig(JSON.parse(readFileSync(new URL('../config/system.json',import.meta.url),'utf8')));
 export const timeoutMs=(interval,c=config)=>Math.max(c.communication.minimum_timeout_ms,c.communication.heartbeat_multiplier*interval+c.communication.grace_ms);
-export const browserConfig=(c=config)=>({app:c.app,input:c.input,environment:c.environment,squad:c.squad,ui:c.ui,simulation:{heartbeat_interval_ms:c.simulation.heartbeat_interval_ms},communication:c.communication});
+export const browserConfig=(c=config)=>({app:c.app,input:c.input,environment:c.environment,squad:c.squad,ui:c.ui,simulation:{heartbeat_interval_ms:c.simulation.heartbeat_interval_ms,random_issues:c.simulation.random_issues??null},communication:c.communication});

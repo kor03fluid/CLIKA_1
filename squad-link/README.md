@@ -13,6 +13,7 @@ VS Code에서 squad-link 폴더를 열고 터미널에서 `node server.mjs`를 �
 - communication: 두절 판정의 최솟값·주기 배수·여유 시간
 - server.port: 접속 포트
 - ui.timezone: 화면 시간대
+- simulation.random_issues: 가상 노드 무작위 이슈 (enabled, min_delay_ms, max_delay_ms, outage_ms)
 
 ## 폴더 구조
 [아키텍처 설명](docs/ARCHITECTURE.md)을 참고하세요. 공통 패킷 규격은 docs 폴더에 있습니다.
@@ -21,7 +22,7 @@ VS Code에서 squad-link 폴더를 열고 터미널에서 `node server.mjs`를 �
 같은 병사의 미종료 SOS는 하나로 묶고 요청 횟수를 표시합니다. 확인은 종료가 아닙니다. SOS 조치 종료는 해당 병사의 미종료 SOS를 일괄 완료합니다. 종료 사건은 처리 완료 탭으로 이동합니다. 다른 유형 사건은 별도입니다.
 
 ## C 팀원 연동
-GET /api/state, GET /api/stream(SSE), GET /api/config, POST /api/ingest(JSON), POST /api/events/{event_id}/ack 또는 resolve.
+GET /api/state, GET /api/stream(SSE), GET /api/config, POST /api/ingest(JSON), POST /api/events/{event_id}/ack 또는 resolve, POST /api/maintenance(JSON, 정비 보고).
 개발 서버는 simulation 소스의 soldier_status/event만 받습니다. 실제 장치 입력은 다음 단계에서 연동합니다.
 
 ## 검증
@@ -33,6 +34,21 @@ GET /api/state, GET /api/stream(SSE), GET /api/config, POST /api/ingest(JSON), P
 `input.mode`는 simulation 또는 device입니다. device에서는 자동 가상 송신과 시연 버튼이 꺼지고 실제 source만 받습니다. 보드가 센서 대신 만든 값은 simulation으로 보내야 합니다. NDJSON 표준입력 전달 도구는 `communication/ndjson-input.mjs`입니다. 실제 COM 포트, BLE 펌웨어 및 보드 송수신은 아직 연결·검증 전입니다.
 
 환경·GPS·상태·사건의 노드 순번은 공통 스트림으로 검사합니다. GPS 미수신 시 과거 유효 좌표를 수신 시각과 별도로 표시합니다. anchor_observation 및 구역 추정, 디스크 기록 복원은 다음 구현입니다.
+
+## 장비 정비 연동 (HoloHand AI 정비)
+정비 시스템(HoloHand의 AI 정비 진단망)이 병사별 장비 상태를 `POST /api/maintenance`로 보고합니다. 분대원 목록과 병사 상세에 **장비 운용 가능 / 제한 운용 / 운용 불가**, 남은 점검 항목, 보고 시각이 표시되고, 상단 지표의 '장비 정비'는 제한 운용·운용 불가 병사 수입니다.
+
+```json
+{"schema_version":"1.0","node_id":"halo_02","status":"go","equipment":"hailo Legacy","reporter":"HoloHand AI 정비",
+ "reasons":[],"items":[{"id":"S1","kind":"impact","label":"HP-01L 충격 감지","state":"open"}],"resolved_event_ids":["halo_02:demo_…:impact:1"]}
+```
+
+- status: go(운용 가능) · limited(제한 운용) · nogo(운용 불가). items의 state: open(점검 대기) · repaired(검사 대기) · monitor(관찰).
+- resolved_event_ids: 정비자가 점검을 끝낸 **충격 관측** 사건만 '정비 점검으로 종료' 처리합니다. 같은 병사의 사건이어야 하며 SOS·통신 두절 등 다른 사건은 닫지 않습니다.
+- Content-Type은 application/json이어야 합니다(다른 웹 페이지의 단순 POST 차단). 장비 상태는 메모리에만 있고 서버를 다시 켜면 정비 시스템이 다시 보고합니다.
+
+## 무작위 이슈 (가상 모드)
+`simulation.random_issues`가 켜져 있으면 가상 병사 노드마다 `min_delay_ms`~`max_delay_ms` 뒤에 충격 관측 · IMU 고장 · 송신 중단(`outage_ms`, 두절 판정 시간보다 짧으면 판정 시간 + 5초) 중 하나가 무작위로 생깁니다. 다음 이슈는 정비 시스템이 그 이슈를 보고 장비를 **운용 가능(go)** 으로 보고한 뒤에 다시 대기 시간을 셉니다(송신 중단은 복구되면 끝). IMU 고장은 정비 보고에서 고장 항목이 수리(repaired)되면 정상으로 돌아옵니다. 시연 제어의 **무작위 이슈 지금 발생 / 끄기·켜기**로 조절하며, 남은 시간과 정비 대기 상태가 표시됩니다. 정비 시스템이 연결되지 않으면 노드마다 이슈 하나에서 멈춥니다.
 
 ## 사건 기록 저장
 설정 storage.enabled=true이면 프로젝트의 data/events.json에 사건 및 처리 상태를 저장합니다. 서버 재시작 시 사건을 복원하고 측정값·연결 상태는 새 수신을 기다립니다. 가상 모드에서는 자동 가상 송신이 즉시 시작됩니다. 저장 경로는 storage.event_file에서 지정합니다. '정상 상태로 초기화'는 사건 기록도 비우는 시연 초기화입니다. 유지할 기록이 있으면 누르지 마세요. 손상된 저장 파일은 조용히 덮어쓰지 않고 서버 시작을 실패시킵니다. 환경·GPS 원시 기록과 모든 패킷의 장기 로그는 아직 저장하지 않습니다.

@@ -2,6 +2,9 @@ import {randomUUID} from 'node:crypto';
 import {validateTelemetry,createTelemetry} from './telemetry.mjs';
 import {config as defaults,timeoutMs} from './config.mjs';
 const sensorValues = new Set(['ok', 'unavailable', 'not_implemented', 'disabled']);
+// Equipment state reported by the maintenance system (HoloHand AI 정비): go 운용 가능 · limited 제한 운용 · nogo 운용 불가.
+const maintStatus = new Set(['go', 'limited', 'nogo']);
+const itemStates = new Set(['open', 'repaired', 'monitor']);
 export function makeState({now = () => performance.now(), wall = () => new Date(), config = defaults} = {}) {
   let soldiers, events, seen, revision, previousBoots, incidentIds, streamHeads;
   const iso = () => wall().toISOString();
@@ -14,7 +17,7 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
       source: null, connection_state: i < config.squad.node_ids.length ? 'waiting' : 'unassigned',
       last_seen_at: null, data_stale: true, payload: null,
       boot_id: null, last_seq: -1, last_seen_mono: null,
-      last_status_mono: null, status_received_at: null
+      last_status_mono: null, status_received_at: null, maintenance: null
     }));
     events = []; incidentIds = new Set(); seen = new Set(); previousBoots = new Map(); revision = 0;
   }
@@ -149,6 +152,47 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
       revision++;
     } else if (!['ack','resolve'].includes(action)) throw Error('지원하지 않는 조작입니다.');
   }
+  // A maintenance report replaces the soldier's equipment state; it may close impact incidents of that soldier
+  // that the technician inspected. SOS, link and other incident types are never closed from here.
+  function maintenance(report) {
+    if (!report || typeof report !== 'object' || Array.isArray(report)) throw Error('정비 보고 형식 오류');
+    if (report.schema_version !== config.app.schema_version) throw Error('규격 버전이 맞지 않습니다.');
+    const s = soldiers.find(s => s.assigned_node_id && s.assigned_node_id === report.node_id);
+    if (!s) throw Error('미등록 병사 노드');
+    if (!maintStatus.has(report.status)) throw Error('장비 상태는 go·limited·nogo 중 하나여야 합니다.');
+    const text = (v, max, label) => {
+      if (v === undefined || v === null) return '';
+      if (typeof v !== 'string' || v.length > max) throw Error(`${label}: ${max}자 이하 문자열이어야 합니다.`);
+      return v;
+    };
+    const list = (v, max, label) => {
+      if (v === undefined) return [];
+      if (!Array.isArray(v) || v.length > max) throw Error(`${label}: ${max}개 이하 목록이어야 합니다.`);
+      return v;
+    };
+    const items = list(report.items, 20, '정비 항목').map(x => {
+      if (!x || typeof x !== 'object' || !itemStates.has(x.state)) throw Error('정비 항목 상태는 open·repaired·monitor 중 하나여야 합니다.');
+      return {id: text(x.id, 20, '항목 ID'), kind: text(x.kind, 20, '항목 종류'), label: text(x.label, 80, '항목 이름'), state: x.state};
+    });
+    const next = {status: report.status, equipment: text(report.equipment, 60, '장비 이름'),
+      reasons: list(report.reasons, 4, '판정 사유').map(r => text(r, 120, '판정 사유')),
+      items, reporter: text(report.reporter, 40, '보고자') || '정비 시스템'};
+    const ids = list(report.resolved_event_ids, 50, '종료 사건').map(id => text(id, 200, '사건 ID'));
+    const before = s.maintenance;
+    const changed = !before || JSON.stringify(next) !== JSON.stringify({status: before.status, equipment: before.equipment,
+      reasons: before.reasons, items: before.items, reporter: before.reporter});
+    const at = iso();
+    s.maintenance = {...next, reported_at: at, changed_at: changed ? at : before.changed_at};
+    const resolved = [];
+    for (const id of ids) {
+      const e = events.find(e => e.event_id === id && e.node_id === s.assigned_node_id && e.event_type === 'impact' && e.event_state !== 'resolved');
+      if (!e) continue;
+      e.event_state = 'resolved'; e.resolved_at = at; e.resolved_by = 'maintenance';
+      resolved.push(id);
+    }
+    revision++;
+    return {accepted: true, changed, resolved, record: structuredClone(s.maintenance)};
+  }
   function snapshot() {
     checkTimeouts();
     return {schema_version: config.app.schema_version, revision, server_time: iso(), source: config.input.mode,
@@ -166,5 +210,5 @@ export function makeState({now = () => performance.now(), wall = () => new Date(
     events=structuredClone(data.events.filter(e=>e.source===config.input.mode));
     incidentIds=new Set(data.incident_ids);revision++;
   }
-  return {reset, ingest, snapshot, action,archive,restore};
+  return {reset, ingest, snapshot, action,archive,restore,maintenance};
 }

@@ -30,7 +30,13 @@
       82
     ],
     "mode": "normal",
-    "motion_state": "moving"
+    "motion_state": "moving",
+    "random_issues": {
+      "enabled": true,
+      "min_delay_ms": 60000,
+      "max_delay_ms": 180000,
+      "outage_ms": 30000
+    }
   },
   "ui": {
     "timezone": "Asia/Seoul",
